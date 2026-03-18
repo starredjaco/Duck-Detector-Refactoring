@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdio>
@@ -66,26 +67,39 @@ namespace ducktee::keystore {
 
         std::string measure_timing_summary() {
             constexpr int kIterations = 12;
-            long long clock_total = 0;
-            long long syscall_total = 0;
+            constexpr int kAttempts = 3;
+            std::array<long long, kAttempts> clock_averages{};
+            std::array<long long, kAttempts> syscall_averages{};
 
-            for (int i = 0; i < kIterations; ++i) {
-                const auto start_clock = std::chrono::steady_clock::now();
-                (void) std::chrono::steady_clock::now();
-                const auto end_clock = std::chrono::steady_clock::now();
-                clock_total += std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        end_clock - start_clock).count();
+            for (int attempt = 0; attempt < kAttempts; ++attempt) {
+                long long clock_total = 0;
+                long long syscall_total = 0;
+                for (int i = 0; i < kIterations; ++i) {
+                    const auto start_clock = std::chrono::steady_clock::now();
+                    (void) std::chrono::steady_clock::now();
+                    const auto end_clock = std::chrono::steady_clock::now();
+                    clock_total += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            end_clock - start_clock).count();
 
-                const auto start_syscall = std::chrono::steady_clock::now();
-                (void) ducktee::common::raw_syscall3(__NR_getpid, 0, 0, 0);
-                const auto end_syscall = std::chrono::steady_clock::now();
-                syscall_total += std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        end_syscall - start_syscall).count();
+                    const auto start_syscall = std::chrono::steady_clock::now();
+                    (void) ducktee::common::raw_syscall3(__NR_getpid, 0, 0, 0);
+                    const auto end_syscall = std::chrono::steady_clock::now();
+                    syscall_total += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            end_syscall - start_syscall).count();
+                }
+                clock_averages[attempt] = clock_total / kIterations;
+                syscall_averages[attempt] = syscall_total / kIterations;
             }
 
+            const auto clock_minmax =
+                    std::minmax_element(clock_averages.begin(), clock_averages.end());
+            const auto syscall_minmax =
+                    std::minmax_element(syscall_averages.begin(), syscall_averages.end());
+
             std::ostringstream builder;
-            builder << "clock_ns=" << (clock_total / kIterations)
-                    << ", syscall_ns=" << (syscall_total / kIterations);
+            builder << "clock_ns=" << *clock_minmax.first << "-" << *clock_minmax.second
+                    << ", syscall_ns=" << *syscall_minmax.first << "-" << *syscall_minmax.second
+                    << ", attempts=" << kAttempts;
             return builder.str();
         }
 

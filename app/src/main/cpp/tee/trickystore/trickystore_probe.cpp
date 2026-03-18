@@ -82,6 +82,7 @@ namespace ducktee::trickystore {
 
         constexpr int kHoneypotIterations = 40;
         constexpr std::uint64_t kHoneypotThresholdNs = 10'000ULL;
+        constexpr int kRepeatedProbeAttempts = 3;
 
         int raw_open(const char *path, int flags) {
 #if defined(__NR_openat)
@@ -360,7 +361,7 @@ namespace ducktee::trickystore {
             return snapshot;
         }
 
-        MethodSnapshot detect_syscall_ioctl_mismatch() {
+        MethodSnapshot run_single_syscall_ioctl_mismatch_probe() {
             MethodSnapshot snapshot;
             const int binder_fd = open_binder_device();
             if (binder_fd < 0) {
@@ -394,6 +395,48 @@ namespace ducktee::trickystore {
                 snapshot.detail = "Raw ioctl and libc ioctl returned different binder results.";
             } else {
                 snapshot.detail = "Raw ioctl and libc ioctl matched on binder version query.";
+            }
+            return snapshot;
+        }
+
+        MethodSnapshot detect_syscall_ioctl_mismatch() {
+            MethodSnapshot snapshot;
+            int hit_count = 0;
+            std::string last_detail;
+
+            for (int attempt = 0; attempt < kRepeatedProbeAttempts; ++attempt) {
+                const MethodSnapshot single = run_single_syscall_ioctl_mismatch_probe();
+                if (!single.detail.empty()) {
+                    last_detail = single.detail;
+                }
+                if (!single.detected) {
+                    continue;
+                }
+                ++hit_count;
+                if (snapshot.findings.empty()) {
+                    snapshot.findings = single.findings;
+                }
+            }
+
+            snapshot.detected = hit_count >= 2;
+            std::ostringstream builder;
+            if (snapshot.detected) {
+                builder << "Raw ioctl and libc ioctl diverged on " << hit_count
+                        << "/" << kRepeatedProbeAttempts << " binder version probes.";
+                snapshot.detail = builder.str();
+            } else {
+                builder << "Raw ioctl and libc ioctl stayed aligned across "
+                        << kRepeatedProbeAttempts << " binder version probes";
+                if (hit_count > 0) {
+                    builder << " (" << hit_count << "/" << kRepeatedProbeAttempts
+                            << " suspicious run).";
+                } else {
+                    builder << ".";
+                }
+                if (!last_detail.empty()) {
+                    builder << " " << last_detail;
+                }
+                snapshot.detail = builder.str();
             }
             return snapshot;
         }
@@ -511,7 +554,7 @@ namespace ducktee::trickystore {
             return snapshot;
         }
 
-        MethodSnapshot detect_ioctl_honeypot() {
+        MethodSnapshot run_single_ioctl_honeypot_probe() {
             MethodSnapshot snapshot;
             const int binder_fd = open_binder_device();
             if (binder_fd < 0) {
@@ -581,6 +624,48 @@ namespace ducktee::trickystore {
                 snapshot.detail = "Keystore-style binder honeypot triggered a timing anomaly.";
             } else {
                 snapshot.detail = "Keystore-style binder honeypot timing stayed within normal bounds.";
+            }
+            return snapshot;
+        }
+
+        MethodSnapshot detect_ioctl_honeypot() {
+            MethodSnapshot snapshot;
+            int hit_count = 0;
+            std::string last_detail;
+
+            for (int attempt = 0; attempt < kRepeatedProbeAttempts; ++attempt) {
+                const MethodSnapshot single = run_single_ioctl_honeypot_probe();
+                if (!single.detail.empty()) {
+                    last_detail = single.detail;
+                }
+                if (!single.detected) {
+                    continue;
+                }
+                ++hit_count;
+                if (snapshot.findings.empty()) {
+                    snapshot.findings = single.findings;
+                }
+            }
+
+            snapshot.detected = hit_count >= 2;
+            std::ostringstream builder;
+            if (snapshot.detected) {
+                builder << "Keystore-style binder honeypot triggered on " << hit_count
+                        << "/" << kRepeatedProbeAttempts << " timing runs.";
+                snapshot.detail = builder.str();
+            } else {
+                builder << "Keystore-style binder honeypot stayed within normal bounds across "
+                        << kRepeatedProbeAttempts << " runs";
+                if (hit_count > 0) {
+                    builder << " (" << hit_count << "/" << kRepeatedProbeAttempts
+                            << " suspicious run).";
+                } else {
+                    builder << ".";
+                }
+                if (!last_detail.empty()) {
+                    builder << " " << last_detail;
+                }
+                snapshot.detail = builder.str();
             }
             return snapshot;
         }
