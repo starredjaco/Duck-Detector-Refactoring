@@ -1,6 +1,10 @@
 package com.eltavine.duckdetector.ui
 
+import android.Manifest
+import android.os.Build
 import android.os.SystemClock
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material3.CircularProgressIndicator
@@ -26,6 +30,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.eltavine.duckdetector.core.notifications.ScanNotificationPermissions
+import com.eltavine.duckdetector.core.notifications.ScanProgressNotificationSnapshot
+import com.eltavine.duckdetector.core.notifications.ScanProgressNotifier
+import com.eltavine.duckdetector.core.notifications.preferences.ScanNotificationConsentStore
+import com.eltavine.duckdetector.core.notifications.preferences.ScanNotificationPrefs
 import com.eltavine.duckdetector.core.ui.components.AlphaBuildBanner
 import com.eltavine.duckdetector.core.ui.components.AlphaBuildWarningOverlay
 import com.eltavine.duckdetector.core.ui.components.ScreenshotWatermarkOverlay
@@ -90,6 +99,8 @@ import com.eltavine.duckdetector.features.zygisk.presentation.ZygiskUiState
 import com.eltavine.duckdetector.features.zygisk.presentation.ZygiskViewModel
 import com.eltavine.duckdetector.ui.shell.AppDestination
 import com.eltavine.duckdetector.ui.shell.FloatingAppTabSwitcher
+import com.eltavine.duckdetector.ui.shell.LiveUpdateConsentDialog
+import com.eltavine.duckdetector.ui.shell.NotificationPermissionConsentDialog
 import com.eltavine.duckdetector.ui.shell.StartupGateState
 import com.eltavine.duckdetector.ui.shell.resolveStartupGateState
 import com.eltavine.duckdetector.ui.shell.shouldCreateDetectorViewModels
@@ -100,14 +111,62 @@ fun DuckDetectorApp() {
     val context = LocalContext.current
     val appContext = context.applicationContext
     val consentStore = remember(appContext) { TeeNetworkConsentStore.getInstance(appContext) }
-    val prefs by produceState<TeeNetworkPrefs?>(initialValue = null, key1 = consentStore) {
+    val notificationConsentStore = remember(appContext) {
+        ScanNotificationConsentStore.getInstance(appContext)
+    }
+    val teePrefs by produceState<TeeNetworkPrefs?>(initialValue = null, key1 = consentStore) {
         consentStore.prefs.collect { currentPrefs ->
             value = currentPrefs
         }
     }
-    val gateState = remember(prefs) { resolveStartupGateState(prefs) }
+    val notificationPrefs by produceState<ScanNotificationPrefs?>(
+        initialValue = null,
+        key1 = notificationConsentStore,
+    ) {
+        notificationConsentStore.prefs.collect { currentPrefs ->
+            value = currentPrefs
+        }
+    }
+    var notificationPermissionState by remember {
+        mutableStateOf(ScanNotificationPermissions.read(appContext))
+    }
+    val gateState = remember(teePrefs, notificationPrefs, notificationPermissionState) {
+        resolveStartupGateState(
+            teePrefs = teePrefs,
+            notificationPrefs = notificationPrefs,
+            notificationPermissionState = notificationPermissionState,
+        )
+    }
     var destination by rememberSaveable { mutableStateOf(AppDestination.MAIN) }
     val scope = rememberCoroutineScope()
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) {
+        notificationPermissionState = ScanNotificationPermissions.read(appContext)
+        scope.launch {
+            notificationConsentStore.markNotificationsPrompted()
+        }
+    }
+    val liveUpdateSettingsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) {
+        notificationPermissionState = ScanNotificationPermissions.read(appContext)
+        if (notificationPermissionState.liveUpdatesGranted) {
+            scope.launch {
+                notificationConsentStore.markLiveUpdatesPrompted()
+            }
+        }
+    }
+
+    LaunchedEffect(notificationPrefs, notificationPermissionState) {
+        val prefs = notificationPrefs ?: return@LaunchedEffect
+        if (notificationPermissionState.notificationsGranted && !prefs.notificationsPrompted) {
+            notificationConsentStore.markNotificationsPrompted()
+        }
+        if (notificationPermissionState.liveUpdatesGranted && !prefs.liveUpdatesPrompted) {
+            notificationConsentStore.markLiveUpdatesPrompted()
+        }
+    }
 
     Surface {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -115,8 +174,9 @@ fun DuckDetectorApp() {
                 AppReadyShell(
                     destination = destination,
                     onSelectDestination = { selected -> destination = selected },
-                    networkPrefs = requireNotNull(prefs),
+                    networkPrefs = requireNotNull(teePrefs),
                     consentStore = consentStore,
+                    notificationPermissionState = notificationPermissionState,
                 )
             } else {
                 StartupGateBackdrop(
@@ -125,7 +185,49 @@ fun DuckDetectorApp() {
                 )
             }
 
-            if (gateState == StartupGateState.REQUIRES_DECISION) {
+            if (gateState == StartupGateState.REQUIRES_NOTIFICATION_DECISION) {
+                NotificationPermissionConsentDialog(
+                    onAllowNotifications = {
+                        if (Build.VERSION.SDK_INT >= 33) {
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            scope.launch {
+                                notificationConsentStore.markNotificationsPrompted()
+                            }
+                        }
+                    },
+                    onSkipNotifications = {
+                        scope.launch {
+                            notificationConsentStore.markNotificationsPrompted()
+                        }
+                    },
+                )
+            }
+
+            if (gateState == StartupGateState.REQUIRES_LIVE_UPDATE_DECISION) {
+                LiveUpdateConsentDialog(
+                    onOpenSettings = {
+                        val intent = ScanNotificationPermissions
+                            .appNotificationPromotionSettingsIntent(appContext)
+                        val canOpenSettings =
+                            intent.resolveActivity(appContext.packageManager) != null
+                        if (canOpenSettings) {
+                            liveUpdateSettingsLauncher.launch(intent)
+                        } else {
+                            scope.launch {
+                                notificationConsentStore.markLiveUpdatesPrompted()
+                            }
+                        }
+                    },
+                    onUseRegularNotifications = {
+                        scope.launch {
+                            notificationConsentStore.markLiveUpdatesPrompted()
+                        }
+                    },
+                )
+            }
+
+            if (gateState == StartupGateState.REQUIRES_CRL_DECISION) {
                 CrlNetworkConsentDialog(
                     onAllowNetwork = {
                         scope.launch {
@@ -153,9 +255,12 @@ private fun AppReadyShell(
     onSelectDestination: (AppDestination) -> Unit,
     networkPrefs: TeeNetworkPrefs,
     consentStore: TeeNetworkConsentStore,
+    notificationPermissionState: com.eltavine.duckdetector.core.notifications.ScanNotificationPermissionState,
 ) {
     val context = LocalContext.current
+    val appContext = context.applicationContext
     val scope = rememberCoroutineScope()
+    val notifier = remember(appContext) { ScanProgressNotifier(appContext) }
     val bootloaderFactory = remember(context) { BootloaderViewModel.factory(context) }
     val teeFactory = remember(context) { TeeViewModel.factory(context) }
     val customRomFactory = remember(context) { CustomRomViewModel.factory(context) }
@@ -315,6 +420,26 @@ private fun AppReadyShell(
     val settingsState = remember(networkPrefs.consentGranted) {
         SettingsUiState(isCrlNetworkingEnabled = networkPrefs.consentGranted)
     }
+    val notificationSnapshot = remember(
+        contributions.size,
+        contributions.count { it.ready },
+        dashboardState.overview,
+        isDashboardLoading,
+    ) {
+        ScanProgressNotificationSnapshot(
+            totalDetectorCount = contributions.size,
+            readyDetectorCount = contributions.count { it.ready },
+            dashboardOverview = dashboardState.overview,
+            scanning = isDashboardLoading,
+        )
+    }
+
+    LaunchedEffect(notificationPermissionState, notificationSnapshot) {
+        notifier.update(
+            permissionState = notificationPermissionState,
+            snapshot = notificationSnapshot,
+        )
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         when (destination) {
@@ -378,8 +503,16 @@ private fun StartupGateBackdrop(
             )
             WrapSafeText(
                 text = when (gateState) {
-                    StartupGateState.LOADING -> "Loading network verification policy."
-                    StartupGateState.REQUIRES_DECISION -> "Waiting for your CRL networking decision."
+                    StartupGateState.LOADING -> "Loading startup verification policy."
+                    StartupGateState.REQUIRES_NOTIFICATION_DECISION ->
+                        "Waiting for your scan-notification decision."
+
+                    StartupGateState.REQUIRES_LIVE_UPDATE_DECISION ->
+                        "Waiting for your Live Update notification decision."
+
+                    StartupGateState.REQUIRES_CRL_DECISION ->
+                        "Waiting for your CRL networking decision."
+
                     StartupGateState.READY -> ""
                 },
                 style = MaterialTheme.typography.bodyMedium,
