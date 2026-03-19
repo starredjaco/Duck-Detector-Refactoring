@@ -27,6 +27,7 @@ class TeeReportReducer(
         val policyHardIndicators = collectPolicyHardIndicators(artifacts)
         val policySoftIndicators = collectPolicySoftIndicators(artifacts, patchState)
         val supplementaryIndicators = collectSupplementaryIndicators(artifacts)
+        val effectiveTier = effectiveTier(artifacts)
         val verdict = determineVerdict(artifacts, policyHardIndicators, policySoftIndicators)
         val supplementaryDangerCount =
             supplementaryIndicators.count { it.level == TeeSignalLevel.FAIL }
@@ -49,7 +50,7 @@ class TeeReportReducer(
         val report = TeeReport(
             stage = TeeScanStage.READY,
             verdict = verdict,
-            tier = artifacts.snapshot.tier,
+            tier = effectiveTier,
             headline = headlineFor(verdict, supplementaryIndicators),
             summary = summaryFor(
                 verdict = verdict,
@@ -95,7 +96,7 @@ class TeeReportReducer(
         policyHardIndicators: List<TeeEvidenceItem>,
         policySoftIndicators: List<TeeEvidenceItem>,
     ): TeeVerdict {
-        val tier = artifacts.snapshot.tier
+        val tier = effectiveTier(artifacts)
         return when {
             policyHardIndicators.isNotEmpty() -> TeeVerdict.TAMPERED
             tier == TeeTier.NONE -> TeeVerdict.BROKEN
@@ -419,8 +420,8 @@ class TeeReportReducer(
                     add(
                         fact(
                             "Tier",
-                            tierValue(artifacts.snapshot),
-                            tierLevel(artifacts.snapshot.tier)
+                            tierValue(artifacts),
+                            tierLevel(effectiveTier(artifacts))
                         )
                     )
                     add(fact("Versions", versionsValue(artifacts.snapshot), TeeSignalLevel.INFO))
@@ -675,14 +676,18 @@ class TeeReportReducer(
         level: TeeSignalLevel,
     ): TeeEvidenceItem = TeeEvidenceItem(title = title, body = body, level = level)
 
-    private fun tierValue(snapshot: AttestationSnapshot): String {
-        val base = snapshot.tier.displayName()
+    private fun tierValue(artifacts: TeeScanArtifacts): String {
+        val effective = effectiveTier(artifacts)
+        val snapshot = artifacts.snapshot
         val attest = snapshot.attestationTier?.displayName()
         val keymaster = snapshot.keymasterTier?.displayName()
+        val strongBoxAttestation = artifacts.strongBox.attestationTier
+            .takeIf { artifacts.strongBox.available || it == TeeTier.STRONGBOX }
+            ?.displayName()
         return when {
-            attest == null && keymaster == null -> base
+            attest == null && keymaster == null && strongBoxAttestation == null -> effective.displayName()
             else -> buildString {
-                append(base)
+                append(effective.displayName())
                 attest?.let {
                     append(" • attest ")
                     append(it)
@@ -691,7 +696,25 @@ class TeeReportReducer(
                     append(" • keymaster ")
                     append(it)
                 }
+                if (strongBoxAttestation != null && strongBoxAttestation != effective.displayName()) {
+                    append(" • sb attest ")
+                    append(strongBoxAttestation)
+                }
             }
+        }
+    }
+
+    private fun effectiveTier(artifacts: TeeScanArtifacts): TeeTier {
+        return when {
+            artifacts.snapshot.tier == TeeTier.STRONGBOX -> TeeTier.STRONGBOX
+            artifacts.snapshot.tier != TeeTier.TEE -> artifacts.snapshot.tier
+            artifacts.strongBox.available && artifacts.strongBox.attestationTier == TeeTier.STRONGBOX ->
+                TeeTier.STRONGBOX
+
+            artifacts.strongBox.available && artifacts.strongBox.keyInfoLevel == "StrongBox" ->
+                TeeTier.STRONGBOX
+
+            else -> artifacts.snapshot.tier
         }
     }
 

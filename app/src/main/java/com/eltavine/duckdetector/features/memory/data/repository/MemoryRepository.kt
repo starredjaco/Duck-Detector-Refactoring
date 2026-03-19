@@ -25,7 +25,7 @@ class MemoryRepository(
     }
 
     private fun scanInternal(): MemoryReport {
-        val snapshot = nativeBridge.collectSnapshot()
+        val snapshot = sanitizeSnapshot(nativeBridge.collectSnapshot())
         if (!snapshot.available) {
             return MemoryReport.failed("Native memory snapshot was unavailable.")
         }
@@ -76,7 +76,7 @@ class MemoryRepository(
         )
     }
 
-    private fun buildMethods(snapshot: MemoryNativeSnapshot): List<MemoryMethodResult> {
+    internal fun buildMethods(snapshot: MemoryNativeSnapshot): List<MemoryMethodResult> {
         return listOf(
             MemoryMethodResult(
                 label = "GOT/PLT resolution",
@@ -116,7 +116,7 @@ class MemoryRepository(
                     snapshot.swappedExec -> MemoryMethodOutcome.REVIEW
                     else -> MemoryMethodOutcome.CLEAN
                 },
-                detail = "Scans executable mappings for writable code, anonymous executable pages, swap, and shared-dirty system code.",
+                detail = "Scans non-ART executable mappings for writable code, unexpected swapped pages, and shared-dirty system code.",
             ),
             MemoryMethodResult(
                 label = "FD-backed code",
@@ -190,6 +190,34 @@ class MemoryRepository(
         }
     }
 
+    internal fun sanitizeSnapshot(snapshot: MemoryNativeSnapshot): MemoryNativeSnapshot {
+        if (!snapshot.available || snapshot.findings.isEmpty()) {
+            return snapshot
+        }
+
+        val filteredFindings = snapshot.findings.filterNot(::isBenignArtCodeCacheSwapFinding)
+        val hasSwappedExecFinding = filteredFindings.any { finding ->
+            finding.section.equals("MAPS", ignoreCase = true) &&
+                    finding.label == SWAPPED_EXEC_LABEL
+        }
+        return snapshot.copy(
+            swappedExec = hasSwappedExecFinding,
+            findings = filteredFindings,
+        )
+    }
+
+    internal fun isBenignArtCodeCacheSwapFinding(finding: MemoryNativeFinding): Boolean {
+        if (!finding.section.equals(
+                "MAPS",
+                ignoreCase = true
+            ) || finding.label != SWAPPED_EXEC_LABEL
+        ) {
+            return false
+        }
+        val loweredDetail = finding.detail.lowercase()
+        return BENIGN_ART_CODE_CACHE_MARKERS.any(loweredDetail::contains)
+    }
+
     private fun String.shouldUseMonospace(): Boolean {
         return contains("0x") ||
                 contains("/data/") ||
@@ -217,5 +245,26 @@ class MemoryRepository(
             MemoryFindingSection.VDSO -> 4
             MemoryFindingSection.LINKER -> 5
         }
+    }
+
+    private companion object {
+        private const val SWAPPED_EXEC_LABEL = "Swapped executable pages"
+
+        private val BENIGN_ART_CODE_CACHE_MARKERS = listOf(
+            "[anon:dalvik-jit-code-cache",
+            "[anon:dalvik-data-code-cache",
+            "[anon:dalvik-zygote-jit-code-cache",
+            "[anon:dalvik-zygote-data-code-cache",
+            "/dev/ashmem/jit-cache",
+            "/dev/ashmem/jit-zygote-cache",
+            "/dev/ashmem/dalvik-jit-code-cache",
+            "/dev/ashmem/dalvik-data-code-cache",
+            "/dev/ashmem/dalvik-zygote-jit-code-cache",
+            "/dev/ashmem/dalvik-zygote-data-code-cache",
+            "/memfd:jit-cache",
+            "/memfd:/jit-cache",
+            "/memfd:jit-zygote-cache",
+            "/memfd:/jit-zygote-cache",
+        )
     }
 }

@@ -61,4 +61,18 @@ class SystemPropertiesNativeBridgeTest {
         assertEquals(1, snapshot.propAreaHoleCount)
         assertTrue(snapshot.propAreaFindings.isEmpty())
     }
+
+    @Test
+    fun `callback required libc message is sanitized as unavailable`() {
+        val snapshot = bridge.parse(
+            """
+            AVAILABLE=1
+            PROP=ro.system.build.fingerprint|Must use __system_property_read_callback() to read
+            """.trimIndent(),
+        )
+
+        assertTrue(snapshot.available)
+        assertEquals("", snapshot.libcValue("ro.system.build.fingerprint"))
+        assertEquals(0, snapshot.nativePropertyHitCount)
+    }
 }

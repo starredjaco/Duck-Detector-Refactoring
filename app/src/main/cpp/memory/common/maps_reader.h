@@ -20,6 +20,8 @@ namespace duckdetector::memory {
 
     bool is_system_path(const std::string &path);
 
+    bool is_benign_art_code_cache_path(const std::string &path);
+
     bool is_probably_jit_path(const std::string &path);
 
     bool is_suspicious_loader_path(const std::string &path);

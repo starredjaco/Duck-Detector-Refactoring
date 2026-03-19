@@ -21,7 +21,7 @@ data class SystemPropertiesNativeSnapshot(
     val propAreaFindings: List<PropAreaFinding> = emptyList(),
 ) {
     val nativePropertyHitCount: Int
-        get() = libcProperties.values.count { it.isNotBlank() }
+        get() = libcProperties.values.count { sanitizeLibcValue(it).isNotBlank() }
 
     val bootParamHitCount: Int
         get() = (cmdlineBootParams.keys + bootconfigBootParams.keys).toSet().size
@@ -29,7 +29,7 @@ data class SystemPropertiesNativeSnapshot(
     fun libcValue(
         property: String,
     ): String {
-        return libcProperties[property].orEmpty()
+        return sanitizeLibcValue(libcProperties[property])
     }
 
     fun findBootValueForProperty(
@@ -57,5 +57,18 @@ data class SystemPropertiesNativeSnapshot(
     private companion object {
         private const val RO_BOOT_PREFIX = "ro.boot."
         private const val ANDROIDBOOT_PREFIX = "androidboot."
+        private const val CALLBACK_REQUIRED_MESSAGE =
+            "Must use __system_property_read_callback() to read"
+    }
+
+    private fun sanitizeLibcValue(
+        value: String?,
+    ): String {
+        val trimmed = value?.trim().orEmpty()
+        return if (trimmed.contains(CALLBACK_REQUIRED_MESSAGE, ignoreCase = true)) {
+            ""
+        } else {
+            trimmed
+        }
     }
 }

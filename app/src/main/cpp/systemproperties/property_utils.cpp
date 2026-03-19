@@ -9,6 +9,27 @@
 
 namespace systemproperties {
 
+    namespace {
+
+        struct PropertyReadContext {
+            std::string value;
+        };
+
+        void property_read_callback(
+                void *cookie,
+                const char *,
+                const char *value,
+                uint32_t
+        ) {
+            auto *context = static_cast<PropertyReadContext *>(cookie);
+            if (context == nullptr) {
+                return;
+            }
+            context->value = value != nullptr ? value : "";
+        }
+
+    }  // namespace
+
     std::string trim_copy(const std::string &value) {
         const auto begin = std::find_if_not(value.begin(), value.end(), [](unsigned char ch) {
             return std::isspace(ch) != 0;
@@ -73,12 +94,18 @@ namespace systemproperties {
     }
 
     std::string read_system_property(const std::string &key) {
-        char buffer[PROP_VALUE_MAX] = {};
-        const int length = __system_property_get(key.c_str(), buffer);
-        if (length <= 0) {
+        const prop_info *info = __system_property_find(key.c_str());
+        if (info == nullptr) {
             return "";
         }
-        return std::string(buffer, static_cast<size_t>(length));
+
+        PropertyReadContext context;
+        __system_property_read_callback(
+                info,
+                property_read_callback,
+                &context
+        );
+        return context.value;
     }
 
     std::map<std::string, std::string>

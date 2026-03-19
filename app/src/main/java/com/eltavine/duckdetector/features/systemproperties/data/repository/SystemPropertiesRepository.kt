@@ -416,7 +416,7 @@ class SystemPropertiesRepository(
                 } else {
                     SystemPropertiesMethodOutcome.SUPPORT
                 },
-                detail = "__system_property_get cross-checks from native code.",
+                detail = "Native libc property cross-checks using the callback-based system property API.",
             ),
             SystemPropertiesMethodResult(
                 label = "Raw boot params",

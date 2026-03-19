@@ -23,7 +23,7 @@ namespace duckdetector::memory {
         }
 
         bool is_relevant_exec_entry(const MapEntry &entry) {
-            return entry.executable && !is_probably_jit_path(entry.path);
+            return entry.executable && !is_benign_art_code_cache_path(entry.path);
         }
 
     }  // namespace

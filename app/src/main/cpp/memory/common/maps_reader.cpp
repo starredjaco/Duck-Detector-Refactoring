@@ -70,21 +70,30 @@ namespace duckdetector::memory {
             return false;
         }
 
-        bool is_known_jit_cache_path(const std::string &lowered) {
+        bool is_known_app_code_cache_path(const std::string &lowered) {
             return starts_with(lowered, "/memfd:jit-cache") ||
                    starts_with(lowered, "/memfd:/jit-cache") ||
                    starts_with(lowered, "/dev/ashmem/jit-cache") ||
                    starts_with(lowered, "/dev/ashmem//jit-cache") ||
                    starts_with(lowered, "/dev/ashmem/dalvik-jit-code-cache") ||
-                   starts_with(lowered, "[anon:dalvik-jit-code-cache]");
+                    starts_with(lowered, "/dev/ashmem/dalvik-data-code-cache") ||
+                    starts_with(lowered, "[anon:dalvik-jit-code-cache]") ||
+                    starts_with(lowered, "[anon:dalvik-jit-code-cache") ||
+                    starts_with(lowered, "[anon:dalvik-data-code-cache]") ||
+                    starts_with(lowered, "[anon:dalvik-data-code-cache");
         }
 
-        bool is_known_jit_zygote_cache_path(const std::string &lowered) {
+        bool is_known_zygote_code_cache_path(const std::string &lowered) {
             return starts_with(lowered, "/memfd:jit-zygote-cache") ||
                    starts_with(lowered, "/memfd:/jit-zygote-cache") ||
                    starts_with(lowered, "/dev/ashmem/jit-zygote-cache") ||
                    starts_with(lowered, "/dev/ashmem//jit-zygote-cache") ||
-                   starts_with(lowered, "[anon:dalvik-zygote-jit-code-cache]");
+                    starts_with(lowered, "/dev/ashmem/dalvik-zygote-jit-code-cache") ||
+                    starts_with(lowered, "/dev/ashmem/dalvik-zygote-data-code-cache") ||
+                    starts_with(lowered, "[anon:dalvik-zygote-jit-code-cache]") ||
+                    starts_with(lowered, "[anon:dalvik-zygote-jit-code-cache") ||
+                    starts_with(lowered, "[anon:dalvik-zygote-data-code-cache]") ||
+                    starts_with(lowered, "[anon:dalvik-zygote-data-code-cache");
         }
 
         bool is_benign_runtime_memfd_path(const std::string &lowered) {
@@ -196,13 +205,25 @@ namespace duckdetector::memory {
                path.rfind("/apex/", 0) == 0;
     }
 
-    bool is_probably_jit_path(const std::string &path) {
+    bool is_benign_art_code_cache_path(const std::string &path) {
         const std::string lowered = to_lower_ascii(path);
-        if (is_known_jit_cache_path(lowered) || is_known_jit_zygote_cache_path(lowered)) {
+        if (is_known_app_code_cache_path(lowered) || is_known_zygote_code_cache_path(lowered)) {
             return true;
         }
         return starts_with(lowered, "[anon:dalvik-") &&
-               contains_any(lowered, {"jit", "code-cache"});
+                contains_any(
+                        lowered,
+                        {
+                                "jit-code-cache",
+                                "zygote-jit-code-cache",
+                                "data-code-cache",
+                                "zygote-data-code-cache",
+                        }
+                );
+    }
+
+    bool is_probably_jit_path(const std::string &path) {
+        return is_benign_art_code_cache_path(path);
     }
 
     bool is_suspicious_loader_path(const std::string &path) {

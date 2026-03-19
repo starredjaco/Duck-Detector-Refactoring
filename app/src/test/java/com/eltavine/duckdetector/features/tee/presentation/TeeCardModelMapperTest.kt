@@ -228,4 +228,28 @@ class TeeCardModelMapperTest {
             model.headerFacts.single { it.label == "Trust" }.status
         )
     }
+
+    @Test
+    fun `header tier shows strongbox when report tier is strongbox`() {
+        val model = mapper.map(
+            report = TeeReport(
+                stage = TeeScanStage.READY,
+                verdict = TeeVerdict.CONSISTENT,
+                tier = TeeTier.STRONGBOX,
+                headline = "Aligned",
+                summary = "summary",
+                collapsedSummary = "clean",
+                trustRoot = TeeTrustRoot.GOOGLE,
+                trustSummary = "Google root",
+                tamperScore = 0,
+                evidenceCount = 0,
+                signals = emptyList(),
+                sections = emptyList(),
+                certificates = emptyList(),
+            ),
+            isExpanded = false,
+        )
+
+        assertEquals("StrongBox", model.headerFacts.single { it.label == "Tier" }.value)
+    }
 }

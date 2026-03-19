@@ -708,7 +708,7 @@ class BootloaderRepository(
                 } else {
                     BootloaderMethodOutcome.SUPPORT
                 },
-                detail = "__system_property_get cross-checks from native code.",
+                detail = "Native libc property cross-checks using the callback-based system property API.",
             ),
             BootloaderMethodResult(
                 label = "Raw boot params",

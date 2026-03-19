@@ -272,6 +272,54 @@ class TeeReportReducerTest {
     }
 
     @Test
+    fun `confirmed strongbox upgrades displayed tier from tee`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                tier = TeeTier.TEE,
+                strongBox = StrongBoxBehaviorResult(
+                    requested = true,
+                    advertised = true,
+                    available = true,
+                    attestationTier = TeeTier.STRONGBOX,
+                    keyInfoLevel = "StrongBox",
+                    detail = "confirmed",
+                ),
+            ),
+        )
+
+        assertEquals(TeeTier.STRONGBOX, report.tier)
+        assertTrue(report.sections.single { it.title == "Attestation" }.items.any {
+            it.title == "Tier" &&
+                    it.body.contains("StrongBox") &&
+                    it.body.contains("attest TEE")
+        })
+    }
+
+    @Test
+    fun `software tier is not upgraded by strongbox side probe`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                tier = TeeTier.SOFTWARE,
+                strongBox = StrongBoxBehaviorResult(
+                    requested = true,
+                    advertised = true,
+                    available = true,
+                    attestationTier = TeeTier.STRONGBOX,
+                    keyInfoLevel = "StrongBox",
+                    detail = "confirmed",
+                ),
+            ),
+        )
+
+        assertEquals(TeeTier.SOFTWARE, report.tier)
+        assertTrue(report.sections.single { it.title == "Attestation" }.items.any {
+            it.title == "Tier" &&
+                    it.body.startsWith("Software") &&
+                    it.body.contains("sb attest StrongBox")
+        })
+    }
+
+    @Test
     fun `disabled crl state uses settings wording`() {
         val report = reducer.reduce(
             baseArtifacts(
