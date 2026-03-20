@@ -8,6 +8,13 @@ data class PropAreaFinding(
     val detail: String,
 )
 
+data class ReadOnlyPropertySerialFinding(
+    val property: String,
+    val suspiciousSampleCount: Int,
+    val low24Hex: String,
+    val detail: String,
+)
+
 data class SystemPropertiesNativeSnapshot(
     val available: Boolean = false,
     val libcProperties: Map<String, String> = emptyMap(),
@@ -19,6 +26,10 @@ data class SystemPropertiesNativeSnapshot(
     val propAreaContextCount: Int = 0,
     val propAreaHoleCount: Int = 0,
     val propAreaFindings: List<PropAreaFinding> = emptyList(),
+    val readOnlySerialAvailable: Boolean = false,
+    val readOnlySerialCheckedCount: Int = 0,
+    val readOnlySerialFindingCount: Int = 0,
+    val readOnlySerialFindings: List<ReadOnlyPropertySerialFinding> = emptyList(),
 ) {
     val nativePropertyHitCount: Int
         get() = libcProperties.values.count { sanitizeLibcValue(it).isNotBlank() }

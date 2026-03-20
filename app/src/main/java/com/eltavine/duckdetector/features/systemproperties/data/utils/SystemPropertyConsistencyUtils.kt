@@ -16,7 +16,9 @@ class SystemPropertyConsistencyUtils {
             if (!shouldEvaluateSourceMismatch(read.category)) {
                 return@mapNotNull null
             }
-            val populatedSources = read.sourceValues.filterValues { it.isNotBlank() }
+            val populatedSources = read.sourceValues
+                .mapValues { (_, value) -> sanitizeSourceValue(value) }
+                .filterValues { it.isNotBlank() }
             val normalizedDistinct = populatedSources.values
                 .map { normalizeForComparison(read.property, it) }
                 .distinct()
@@ -396,6 +398,17 @@ class SystemPropertyConsistencyUtils {
         }
     }
 
+    private fun sanitizeSourceValue(
+        value: String,
+    ): String {
+        val trimmed = value.trim()
+        return if (trimmed.contains(CALLBACK_REQUIRED_MESSAGE, ignoreCase = true)) {
+            ""
+        } else {
+            trimmed
+        }
+    }
+
     private fun isUnlockedValue(
         value: String,
     ): Boolean {
@@ -477,6 +490,9 @@ class SystemPropertyConsistencyUtils {
             "ro.boot.flash.locked",
             "ro.boot.vbmeta.device_state",
         )
+
+        private const val CALLBACK_REQUIRED_MESSAGE =
+            "Must use __system_property_read_callback() to read"
 
         private val partitionVerifiedProperties = listOf(
             "partition.system.verified",

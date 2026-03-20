@@ -41,7 +41,7 @@ class NativeRootCardModelMapper {
             NativeRootStage.FAILED -> "native root scan failed"
             NativeRootStage.READY -> when {
                 !report.nativeAvailable && report.findings.isEmpty() -> "native detector unavailable"
-                else -> "${report.pathCheckCount} paths · ${report.processCheckedCount} proc entries · ${report.kernelSourceCount} kernel sources · ${report.propertyCheckCount} props"
+                else -> "${report.pathCheckCount} paths · ${report.processCheckedCount} proc entries · ${report.cgroupPathCheckCount} cgroup dirs · ${report.kernelSourceCount} kernel sources · ${report.propertyCheckCount} props"
             }
         }
     }
@@ -67,23 +67,23 @@ class NativeRootCardModelMapper {
     private fun buildSummary(report: NativeRootReport): String {
         return when (report.stage) {
             NativeRootStage.LOADING ->
-                "Native probes are collecting syscall, side-channel, process, path, kernel-string, and property evidence."
+                "Native probes are collecting syscall, side-channel, process, path, cgroup, kernel-string, and property evidence."
 
             NativeRootStage.FAILED ->
                 report.errorMessage ?: "Native Root scan failed before evidence could be assembled."
 
             NativeRootStage.READY -> when {
                 report.hasDangerFindings ->
-                    "Direct syscall hits, root-manager paths, /data/local/tmp metadata drift, or unexpected root processes indicate active native root infrastructure."
+                    "Direct syscall hits, root-manager paths, /data/local/tmp metadata drift, cgroup/process leakage, or unexpected root processes indicate active native root infrastructure."
 
                 report.hasWarningFindings ->
-                    "Only weaker process, kernel, property, or metadata residue surfaced. These are review-worthy, but not as strong as direct native probes."
+                    "Only weaker process, cgroup, kernel, property, or metadata residue surfaced. These are review-worthy, but not as strong as direct native probes."
 
                 !report.nativeAvailable ->
                     "This detector relies mostly on JNI-backed native probes. Native coverage was unavailable on this build, and the remaining runtime checks stayed clean."
 
                 else ->
-                    "KernelSU/APatch prctl-side probes, SUSFS side-channel, /data/adb artifacts, /data/local/tmp metadata, root-process audit, kernel strings, and properties stayed clean."
+                    "KernelSU/APatch prctl-side probes, SUSFS side-channel, /data/adb artifacts, /data/local/tmp metadata, root-process audit, cgroup/process leakage, kernel strings, and properties stayed clean."
             }
         }
     }
@@ -164,13 +164,13 @@ class NativeRootCardModelMapper {
     private fun buildRuntimeRows(report: NativeRootReport): List<NativeRootDetailRowModel> {
         return when (report.stage) {
             NativeRootStage.LOADING -> placeholderRows(
-                listOf("Manager paths", "Root processes"),
+                listOf("Manager paths", "Root processes", "Cgroup leakage"),
                 DetectorStatus.info(InfoKind.SUPPORT),
                 "Pending",
             )
 
             NativeRootStage.FAILED -> placeholderRows(
-                listOf("Manager paths", "Root processes"),
+                listOf("Manager paths", "Root processes", "Cgroup leakage"),
                 DetectorStatus.info(InfoKind.ERROR),
                 "Error",
             )
@@ -237,21 +237,21 @@ class NativeRootCardModelMapper {
                 if (report.hasDangerFindings) {
                     add(
                         NativeRootImpactItemModel(
-                            text = "Direct native hits are stronger than plain package or property signals because they come from syscall behavior, runtime processes, or root-manager footprints under /data/adb.",
+                            text = "Direct native hits are stronger than plain package or property signals because they come from syscall behavior, runtime processes, cgroup visibility mismatches, or root-manager footprints under /data/adb.",
                             status = DetectorStatus.danger(),
                         ),
                     )
                 } else if (report.hasWarningFindings) {
                     add(
                         NativeRootImpactItemModel(
-                            text = "Kernel strings or property residue can indicate native-root history or custom kernel modifications, but they are weaker than direct syscall-side probes.",
+                            text = "Kernel strings, property residue, or cgroup leakage hints can indicate native-root history or selective runtime hiding, but they are weaker than direct syscall-side probes.",
                             status = DetectorStatus.warning(),
                         ),
                     )
                 } else if (report.nativeAvailable) {
                     add(
                         NativeRootImpactItemModel(
-                            text = "No common KernelSU, APatch, Magisk, or SUSFS-native traces surfaced from the current probe set.",
+                            text = "No common KernelSU, APatch, Magisk, SUSFS, or cgroup-leak traces surfaced from the current probe set.",
                             status = DetectorStatus.allClear(),
                         ),
                     )
@@ -303,6 +303,11 @@ class NativeRootCardModelMapper {
                     "Proc checked",
                     "Proc denied",
                     "Proc hits",
+                    "Cgroup paths",
+                    "Cgroup visible",
+                    "Cgroup proc",
+                    "Cgroup denied",
+                    "Cgroup hits",
                     "Kernel sources",
                     "Kernel hits",
                     "Properties checked",
@@ -320,6 +325,11 @@ class NativeRootCardModelMapper {
                     "Proc checked",
                     "Proc denied",
                     "Proc hits",
+                    "Cgroup paths",
+                    "Cgroup visible",
+                    "Cgroup proc",
+                    "Cgroup denied",
+                    "Cgroup hits",
                     "Kernel sources",
                     "Kernel hits",
                     "Properties checked",
@@ -361,6 +371,42 @@ class NativeRootCardModelMapper {
                     when {
                         report.processHitCount > 0 -> DetectorStatus.danger()
                         report.nativeAvailable -> DetectorStatus.allClear()
+                        else -> DetectorStatus.info(InfoKind.SUPPORT)
+                    },
+                ),
+                NativeRootDetailRowModel(
+                    "Cgroup paths",
+                    if (report.cgroupAvailable) report.cgroupPathCheckCount.toString() else "N/A",
+                    if (report.cgroupAvailable) DetectorStatus.allClear() else DetectorStatus.info(
+                        InfoKind.SUPPORT
+                    ),
+                ),
+                NativeRootDetailRowModel(
+                    "Cgroup visible",
+                    if (report.cgroupAvailable) report.cgroupAccessiblePathCount.toString() else "N/A",
+                    if (report.cgroupAvailable) DetectorStatus.allClear() else DetectorStatus.info(
+                        InfoKind.SUPPORT
+                    ),
+                ),
+                NativeRootDetailRowModel(
+                    "Cgroup proc",
+                    if (report.cgroupAvailable) report.cgroupProcessCheckedCount.toString() else "N/A",
+                    if (report.cgroupAvailable) DetectorStatus.allClear() else DetectorStatus.info(
+                        InfoKind.SUPPORT
+                    ),
+                ),
+                NativeRootDetailRowModel(
+                    "Cgroup denied",
+                    if (report.cgroupAvailable) report.cgroupProcDeniedCount.toString() else "N/A",
+                    DetectorStatus.info(InfoKind.SUPPORT),
+                ),
+                NativeRootDetailRowModel(
+                    "Cgroup hits",
+                    if (report.cgroupAvailable) report.cgroupHitCount.toString() else "N/A",
+                    when {
+                        report.cgroupFindings.any { it.severity == NativeRootFindingSeverity.DANGER } -> DetectorStatus.danger()
+                        report.cgroupHitCount > 0 -> DetectorStatus.warning()
+                        report.cgroupAvailable -> DetectorStatus.allClear()
                         else -> DetectorStatus.info(InfoKind.SUPPORT)
                     },
                 ),
@@ -453,6 +499,7 @@ class NativeRootCardModelMapper {
             "prctlProbe",
             "susfsSideChannel",
             "runtimeArtifacts",
+            "cgroupLeakage",
             "kernelTraces",
             "propertyResidue",
             "nativeLibrary",

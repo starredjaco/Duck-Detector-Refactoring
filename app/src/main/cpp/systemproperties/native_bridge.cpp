@@ -3,6 +3,7 @@
 #include "systemproperties/boot_param_utils.h"
 #include "systemproperties/prop_area_probe.h"
 #include "systemproperties/property_utils.h"
+#include "systemproperties/readonly_serial_probe.h"
 
 #include <set>
 #include <sstream>
@@ -68,6 +69,8 @@ Java_com_eltavine_duckdetector_features_systemproperties_data_native_SystemPrope
     const auto bootconfig_params = systemproperties::parse_bootconfig_params(raw_bootconfig,
                                                                              boot_keys);
     const auto prop_area_snapshot = systemproperties::scan_prop_area_holes();
+    const auto readonly_serial_snapshot =
+            systemproperties::scan_readonly_property_serials(properties);
 
     std::ostringstream output;
     output << "AVAILABLE=1\n";
@@ -76,6 +79,9 @@ Java_com_eltavine_duckdetector_features_systemproperties_data_native_SystemPrope
     output << "PROP_AREA_AVAILABLE=" << (prop_area_snapshot.available ? 1 : 0) << "\n";
     output << "PROP_AREA_CONTEXTS=" << prop_area_snapshot.context_count << "\n";
     output << "PROP_AREA_HOLES=" << prop_area_snapshot.hole_count << "\n";
+    output << "RO_SERIAL_AVAILABLE=" << (readonly_serial_snapshot.available ? 1 : 0) << "\n";
+    output << "RO_SERIAL_CHECKED=" << readonly_serial_snapshot.checked_count << "\n";
+    output << "RO_SERIAL_FINDINGS=" << readonly_serial_snapshot.finding_count << "\n";
 
     for (const auto &[key, value]: libc_properties) {
         output << "PROP=" << key << "|" << systemproperties::escape_value(value) << "\n";
@@ -92,6 +98,18 @@ Java_com_eltavine_duckdetector_features_systemproperties_data_native_SystemPrope
                 << finding.context
                 << '|'
                 << finding.hole_count
+                << '|'
+                << systemproperties::escape_value(finding.detail)
+                << "\n";
+    }
+    for (const auto &finding: readonly_serial_snapshot.findings) {
+        output
+                << "RO_SERIAL_FINDING="
+                << finding.property
+                << '|'
+                << finding.suspicious_sample_count
+                << '|'
+                << finding.low24_hex
                 << '|'
                 << systemproperties::escape_value(finding.detail)
                 << "\n";

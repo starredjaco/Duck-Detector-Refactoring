@@ -22,6 +22,15 @@ class SystemPropertiesCardModelMapperTest {
             stage = SystemPropertiesStage.READY,
             signals = listOf(
                 SystemPropertySignal(
+                    property = "ro serial anomaly: ro.build.fingerprint",
+                    description = "Read-only property serial anomaly",
+                    value = "low24=0x000002",
+                    category = SystemPropertyCategory.PROPERTY_CONSISTENCY,
+                    severity = SystemPropertySeverity.DANGER,
+                    source = SystemPropertySource.NATIVE_LIBC,
+                    detail = "Read-only property serial low24 was non-zero in 3/3 native libc sample(s).",
+                ),
+                SystemPropertySignal(
                     property = "prop_area hole: u:object_r:shell_prop:s0",
                     description = "Raw property area layout residue",
                     value = "2 hole(s)",
@@ -44,7 +53,16 @@ class SystemPropertiesCardModelMapperTest {
             propAreaAvailable = true,
             propAreaContextCount = 6,
             propAreaHoleCount = 2,
+            readOnlySerialAvailable = true,
+            readOnlySerialCheckedCount = 8,
+            readOnlySerialFindingCount = 1,
             methods = listOf(
+                SystemPropertiesMethodResult(
+                    label = "Read-only serials",
+                    summary = "1 anomaly(s)",
+                    outcome = SystemPropertiesMethodOutcome.DANGER,
+                    detail = "Sampled native libc serials for 8 tracked ro.* property/properties.",
+                ),
                 SystemPropertiesMethodResult(
                     label = "Prop area layout",
                     summary = "2 hole(s)",
@@ -56,6 +74,11 @@ class SystemPropertiesCardModelMapperTest {
 
         val model = mapper.map(report)
 
+        assertTrue(model.subtitle.contains("ro-serial anomaly", ignoreCase = true))
+        assertTrue(model.methodRows.any { it.label == "Read-only serials" && it.value == "1 anomaly(s)" })
+        assertTrue(model.consistencyRows.any { it.label.contains("ro serial anomaly:") })
+        assertEquals("8", model.scanRows.single { it.label == "RO serial checks" }.value)
+        assertEquals("1", model.scanRows.single { it.label == "RO serial anomalies" }.value)
         assertTrue(model.subtitle.contains("prop-area hole", ignoreCase = true))
         assertTrue(model.methodRows.any { it.label == "Prop area layout" && it.value == "2 hole(s)" })
         assertTrue(model.consistencyRows.any { it.label.contains("prop_area hole:") })

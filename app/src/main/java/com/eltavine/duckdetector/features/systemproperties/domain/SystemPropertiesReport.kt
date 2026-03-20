@@ -76,6 +76,9 @@ data class SystemPropertiesReport(
     val propAreaAvailable: Boolean,
     val propAreaContextCount: Int,
     val propAreaHoleCount: Int,
+    val readOnlySerialAvailable: Boolean,
+    val readOnlySerialCheckedCount: Int,
+    val readOnlySerialFindingCount: Int,
     val methods: List<SystemPropertiesMethodResult>,
     val errorMessage: String? = null,
 ) {
@@ -139,6 +142,9 @@ data class SystemPropertiesReport(
                 propAreaAvailable = false,
                 propAreaContextCount = 0,
                 propAreaHoleCount = 0,
+                readOnlySerialAvailable = false,
+                readOnlySerialCheckedCount = 0,
+                readOnlySerialFindingCount = 0,
                 methods = emptyList(),
             )
         }
@@ -160,6 +166,9 @@ data class SystemPropertiesReport(
                 propAreaAvailable = false,
                 propAreaContextCount = 0,
                 propAreaHoleCount = 0,
+                readOnlySerialAvailable = false,
+                readOnlySerialCheckedCount = 0,
+                readOnlySerialFindingCount = 0,
                 methods = emptyList(),
                 errorMessage = message,
             )

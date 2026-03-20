@@ -42,13 +42,10 @@ class StrongBoxBehaviorProbeSuite(
         val available = keyInfoResult.keyInfoLevel == "StrongBox"
         val attestation = runCatching { collector.collect(useStrongBox = true) }.getOrNull()
         val attestationTier = attestation?.tier ?: TeeTier.UNKNOWN
+        val attestationAssessment = assessStrongBoxAttestation(available, attestationTier)
 
-        if (available && attestationTier != TeeTier.STRONGBOX) {
-            hardFailures += "StrongBox key generation succeeded, but attestation tier came back as $attestationTier."
-        }
-        if (!available && attestationTier == TeeTier.STRONGBOX) {
-            hardFailures += "Attestation claimed StrongBox, but local KeyInfo could not confirm a StrongBox key."
-        }
+        attestationAssessment.hardFailure?.let(hardFailures::add)
+        attestationAssessment.warning?.let(warnings::add)
 
         if (testRsa4096Acceptance()) {
             warnings += "StrongBox accepted RSA-4096, which is atypical for current hardware-backed implementations."
@@ -275,6 +272,32 @@ internal fun isPixelDeviceProfile(
     val modelPixel = Regex("^Pixel\\b", RegexOption.IGNORE_CASE).containsMatchIn(model)
     return modelPixel && (brandGoogle || manufacturerGoogle)
 }
+
+internal fun assessStrongBoxAttestation(
+    available: Boolean,
+    attestationTier: TeeTier,
+): StrongBoxAttestationAssessment {
+    return when {
+        available && attestationTier == TeeTier.UNKNOWN -> StrongBoxAttestationAssessment(
+            warning = "StrongBox key generation succeeded, but dedicated attestation did not expose a tier.",
+        )
+
+        available && attestationTier != TeeTier.STRONGBOX -> StrongBoxAttestationAssessment(
+            hardFailure = "StrongBox key generation succeeded, but attestation tier came back as $attestationTier.",
+        )
+
+        !available && attestationTier == TeeTier.STRONGBOX -> StrongBoxAttestationAssessment(
+            hardFailure = "Attestation claimed StrongBox, but local KeyInfo could not confirm a StrongBox key.",
+        )
+
+        else -> StrongBoxAttestationAssessment()
+    }
+}
+
+internal data class StrongBoxAttestationAssessment(
+    val hardFailure: String? = null,
+    val warning: String? = null,
+)
 
 data class StrongBoxBehaviorResult(
     val requested: Boolean,

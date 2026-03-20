@@ -47,6 +47,7 @@ set(SYSTEM_PROPERTIES_SOURCES
     systemproperties/property_utils.cpp
     systemproperties/boot_param_utils.cpp
     systemproperties/prop_area_probe.cpp
+    systemproperties/readonly_serial_probe.cpp
     systemproperties/native_bridge.cpp
 )
 
@@ -85,8 +86,10 @@ set(PLAY_INTEGRITY_FIX_SOURCES
 set(NATIVE_ROOT_SOURCES
     nativeroot/common/codec.cpp
     nativeroot/common/io_utils.cpp
+    nativeroot/cgroup_bridge.cpp
     nativeroot/probes/prctl_probe.cpp
     nativeroot/probes/susfs_probe.cpp
+    nativeroot/probes/cgroup_process_probe.cpp
     nativeroot/probes/path_probe.cpp
     nativeroot/probes/process_probe.cpp
     nativeroot/probes/kernel_probe.cpp

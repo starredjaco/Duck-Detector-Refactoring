@@ -80,8 +80,8 @@ android {
         applicationId = "com.eltavine.duckdetector"
         minSdk = 29
         targetSdk = 36
-        versionCode = 205
-        versionName = "26.3.5-alpha"
+        versionCode = 206
+        versionName = "26.3.6-alpha"
         buildConfigField("String", "BUILD_TIME_UTC", "\"$buildTimeUtc\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

@@ -1,0 +1,46 @@
+package com.eltavine.duckdetector.features.nativeroot.data.native
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class CgroupProcessLeakNativeBridgeTest {
+
+    private val bridge = CgroupProcessLeakNativeBridge()
+
+    @Test
+    fun `parse decodes cgroup paths and entries`() {
+        val snapshot = bridge.parse(
+            """
+                AVAILABLE=1
+                PATH_CHECKS=32
+                PATH_ACCESSIBLE=2
+                PROCESS_COUNT=3
+                PROC_DENIED=1
+                PATH=/sys/fs/cgroup/uid_2000	2000	1	2
+                PATH=/acct/uid_2000	2000	0	0
+                ENTRY=/sys/fs/cgroup/uid_2000	2000	321	0	lspd\tdaemon	/system/bin/lspd\0--service
+            """.trimIndent(),
+        )
+
+        assertTrue(snapshot.available)
+        assertEquals(32, snapshot.pathCheckCount)
+        assertEquals(2, snapshot.accessiblePathCount)
+        assertEquals(3, snapshot.processCount)
+        assertEquals(1, snapshot.procDeniedCount)
+        assertEquals(2, snapshot.paths.size)
+        assertEquals(1, snapshot.entries.size)
+        assertEquals("lspd\tdaemon", snapshot.entries.single().comm)
+        assertEquals("/system/bin/lspd\u0000--service", snapshot.entries.single().cmdline)
+    }
+
+    @Test
+    fun `parse falls back safely on blank raw data`() {
+        val snapshot = bridge.parse("")
+
+        assertFalse(snapshot.available)
+        assertTrue(snapshot.paths.isEmpty())
+        assertTrue(snapshot.entries.isEmpty())
+    }
+}

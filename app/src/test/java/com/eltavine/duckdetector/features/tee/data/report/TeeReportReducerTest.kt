@@ -272,6 +272,36 @@ class TeeReportReducerTest {
     }
 
     @Test
+    fun `unknown strongbox attestation tier no longer creates supplementary review`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                tier = TeeTier.TEE,
+                strongBox = StrongBoxBehaviorResult(
+                    requested = true,
+                    advertised = true,
+                    available = true,
+                    attestationTier = TeeTier.UNKNOWN,
+                    keyInfoLevel = "StrongBox",
+                    warnings = listOf(
+                        "StrongBox key generation succeeded, but dedicated attestation did not expose a tier.",
+                    ),
+                    detail = "unknown tier",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(TeeTier.STRONGBOX, report.tier)
+        assertEquals(0, report.supplementaryIndicatorCount)
+        assertEquals("Attestation, trust path, and revocation checks line up.", report.summary)
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "StrongBox" &&
+                    it.body.contains("did not expose a tier") &&
+                    it.level == TeeSignalLevel.INFO
+        })
+    }
+
+    @Test
     fun `confirmed strongbox upgrades displayed tier from tee`() {
         val report = reducer.reduce(
             baseArtifacts(

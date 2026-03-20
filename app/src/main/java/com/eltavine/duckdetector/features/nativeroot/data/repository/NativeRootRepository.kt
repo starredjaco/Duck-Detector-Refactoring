@@ -2,6 +2,9 @@ package com.eltavine.duckdetector.features.nativeroot.data.repository
 
 import com.eltavine.duckdetector.features.nativeroot.data.native.NativeRootNativeBridge
 import com.eltavine.duckdetector.features.nativeroot.data.native.NativeRootNativeFinding
+import com.eltavine.duckdetector.features.nativeroot.data.native.NativeRootNativeSnapshot
+import com.eltavine.duckdetector.features.nativeroot.data.probes.CgroupProcessLeakProbe
+import com.eltavine.duckdetector.features.nativeroot.data.probes.CgroupProcessLeakProbeResult
 import com.eltavine.duckdetector.features.nativeroot.data.probes.RootProcessAuditProbe
 import com.eltavine.duckdetector.features.nativeroot.data.probes.ShellTmpMetadataProbe
 import com.eltavine.duckdetector.features.nativeroot.domain.NativeRootFinding
@@ -18,6 +21,7 @@ class NativeRootRepository(
     private val nativeBridge: NativeRootNativeBridge = NativeRootNativeBridge(),
     private val shellTmpMetadataProbe: ShellTmpMetadataProbe = ShellTmpMetadataProbe(),
     private val rootProcessAuditProbe: RootProcessAuditProbe = RootProcessAuditProbe(),
+    private val cgroupProcessLeakProbe: CgroupProcessLeakProbe = CgroupProcessLeakProbe(),
 ) {
 
     suspend fun scan(): NativeRootReport = withContext(Dispatchers.IO) {
@@ -34,7 +38,9 @@ class NativeRootRepository(
         }
         val shellTmpResult = shellTmpMetadataProbe.run()
         val rootProcessResult = rootProcessAuditProbe.run()
-        val findings = nativeFindings + shellTmpResult.findings + rootProcessResult.findings
+        val cgroupResult = cgroupProcessLeakProbe.run()
+        val findings =
+            nativeFindings + shellTmpResult.findings + rootProcessResult.findings + cgroupResult.findings
 
         return NativeRootReport(
             stage = NativeRootStage.READY,
@@ -52,6 +58,12 @@ class NativeRootRepository(
             processHitCount = snapshot.processHitCount + rootProcessResult.hitCount,
             processCheckedCount = snapshot.processCheckedCount + rootProcessResult.checkedCount,
             processDeniedCount = snapshot.processDeniedCount + rootProcessResult.deniedCount,
+            cgroupAvailable = cgroupResult.available,
+            cgroupPathCheckCount = cgroupResult.pathCheckCount,
+            cgroupAccessiblePathCount = cgroupResult.accessiblePathCount,
+            cgroupProcessCheckedCount = cgroupResult.processCheckedCount,
+            cgroupProcDeniedCount = cgroupResult.procDeniedCount,
+            cgroupHitCount = cgroupResult.hitCount,
             kernelHitCount = snapshot.kernelHitCount,
             kernelSourceCount = snapshot.kernelSourceCount,
             propertyHitCount = snapshot.propertyHitCount,
@@ -61,15 +73,17 @@ class NativeRootRepository(
                 findings = findings,
                 shellTmpDetail = shellTmpResult.detail,
                 rootProcessDetail = rootProcessResult.detail,
+                cgroupResult = cgroupResult,
             ),
         )
     }
 
     private fun buildMethods(
-        snapshot: com.eltavine.duckdetector.features.nativeroot.data.native.NativeRootNativeSnapshot,
+        snapshot: NativeRootNativeSnapshot,
         findings: List<NativeRootFinding>,
         shellTmpDetail: String,
         rootProcessDetail: String,
+        cgroupResult: CgroupProcessLeakProbeResult,
     ): List<NativeRootMethodResult> {
         val directFindings =
             findings.filter { it.group == NativeRootGroup.SYSCALL || it.group == NativeRootGroup.SIDE_CHANNEL }
@@ -122,7 +136,7 @@ class NativeRootRepository(
                     else -> NativeRootMethodOutcome.SUPPORT
                 },
                 detail = buildString {
-                    append("Scan /data/adb manager paths, /data/local/tmp metadata, and /proc process state for KernelSU, APatch, KernelPatch, Magisk, and unexpected root-process traces.")
+                    append("Scan /data/adb manager paths, /data/local/tmp metadata, /proc process state, and per-UID cgroup trees for KernelSU, APatch, KernelPatch, Magisk, selective hiding, and unexpected root-process traces.")
                     if (shellTmpDetail.isNotBlank()) {
                         append("\nShell tmp: ")
                         append(shellTmpDetail)
@@ -131,7 +145,26 @@ class NativeRootRepository(
                         append("\nProcess audit: ")
                         append(rootProcessDetail)
                     }
+                    if (cgroupResult.detail.isNotBlank()) {
+                        append("\nCgroup audit: ")
+                        append(cgroupResult.detail)
+                    }
                 },
+            ),
+            NativeRootMethodResult(
+                label = "cgroupLeakage",
+                summary = when {
+                    cgroupResult.hitCount > 0 -> "${cgroupResult.hitCount} hit(s)"
+                    cgroupResult.available -> "Clean"
+                    else -> "Unavailable"
+                },
+                outcome = when {
+                    cgroupResult.findings.any { it.severity == NativeRootFindingSeverity.DANGER } -> NativeRootMethodOutcome.DETECTED
+                    cgroupResult.hitCount > 0 -> NativeRootMethodOutcome.WARNING
+                    cgroupResult.available -> NativeRootMethodOutcome.CLEAN
+                    else -> NativeRootMethodOutcome.SUPPORT
+                },
+                detail = "Enumerate per-UID cgroup trees and compare native getdents visibility against Java File view plus /proc/<pid>/status UID ownership. ${cgroupResult.detail}".trim(),
             ),
             NativeRootMethodResult(
                 label = "kernelTraces",
@@ -182,7 +215,7 @@ class NativeRootRepository(
                     snapshot.available -> NativeRootMethodOutcome.CLEAN
                     else -> NativeRootMethodOutcome.SUPPORT
                 },
-                detail = "Direct probes are syscall and side-channel results; indirect probes are kernel strings, paths, processes, and properties.",
+                detail = "Direct probes are syscall and side-channel results; indirect probes are kernel strings, paths, processes, properties, and cgroup leakage.",
             ),
         )
     }

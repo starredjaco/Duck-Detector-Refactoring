@@ -65,6 +65,12 @@ data class NativeRootReport(
     val processHitCount: Int,
     val processCheckedCount: Int,
     val processDeniedCount: Int,
+    val cgroupAvailable: Boolean,
+    val cgroupPathCheckCount: Int,
+    val cgroupAccessiblePathCount: Int,
+    val cgroupProcessCheckedCount: Int,
+    val cgroupProcDeniedCount: Int,
+    val cgroupHitCount: Int,
     val kernelHitCount: Int,
     val kernelSourceCount: Int,
     val propertyHitCount: Int,
@@ -77,6 +83,9 @@ data class NativeRootReport(
 
     val runtimeFindings: List<NativeRootFinding>
         get() = findings.filter { it.group == NativeRootGroup.PATH || it.group == NativeRootGroup.PROCESS }
+
+    val cgroupFindings: List<NativeRootFinding>
+        get() = findings.filter { it.id.startsWith("cgroup_") }
 
     val kernelFindings: List<NativeRootFinding>
         get() = findings.filter { it.group == NativeRootGroup.KERNEL }
@@ -122,6 +131,12 @@ data class NativeRootReport(
                 processHitCount = 0,
                 processCheckedCount = 0,
                 processDeniedCount = 0,
+                cgroupAvailable = false,
+                cgroupPathCheckCount = 0,
+                cgroupAccessiblePathCount = 0,
+                cgroupProcessCheckedCount = 0,
+                cgroupProcDeniedCount = 0,
+                cgroupHitCount = 0,
                 kernelHitCount = 0,
                 kernelSourceCount = 0,
                 propertyHitCount = 0,
