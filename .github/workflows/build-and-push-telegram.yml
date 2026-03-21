@@ -70,14 +70,37 @@ jobs:
         run: |
           set -euo pipefail
 
-          expected_sha256=$(keytool -list -v \
+          keytool_output=$(keytool -list -v \
             -keystore "${ANDROID_KEYSTORE_PATH}" \
             -storepass "${ANDROID_KEYSTORE_PASSWORD}" \
-            -alias "${ANDROID_KEY_ALIAS}" \
+            -alias "${ANDROID_KEY_ALIAS}")
+
+          expected_sha256=$(printf '%s\n' "${keytool_output}" \
             | sed -n 's/^[[:space:]]*SHA256:[[:space:]]*//p' \
             | head -n 1 \
             | tr -d '[:space:]:' \
             | tr '[:upper:]' '[:lower:]')
+
+          owner_line=$(printf '%s\n' "${keytool_output}" \
+            | sed -n 's/^Owner: //p' \
+            | head -n 1)
+
+          signer_name=$(OWNER_LINE="${owner_line}" python3 - <<'PY'
+          import os
+          import re
+
+          owner = os.environ.get("OWNER_LINE", "").strip()
+          if not owner:
+              print("Unknown signer", end="")
+              raise SystemExit(0)
+
+          match = re.search(r"(?:^|,\s*)CN=([^,]+)", owner)
+          if match:
+              print(match.group(1).strip(), end="")
+          else:
+              print(owner, end="")
+          PY
+          )
 
           if [ -z "${expected_sha256}" ]; then
             echo "Failed to extract SHA-256 fingerprint from the configured keystore." >&2
@@ -85,6 +108,7 @@ jobs:
           fi
 
           echo "sha256=${expected_sha256}" >> "$GITHUB_OUTPUT"
+          echo "signer_name=${signer_name}" >> "$GITHUB_OUTPUT"
 
       - name: Build release APK
         id: build
@@ -115,10 +139,12 @@ jobs:
         shell: bash
         env:
           DURATION_HUMAN: ${{ steps.build.outputs.duration_human }}
+          GIT_BRANCH: ${{ github.ref_name }}
+          SIGNER_NAME: ${{ steps.signing_fingerprint.outputs.signer_name }}
         run: |
           set -euo pipefail
 
-          apk_path=$(python3 - <<'PY'
+          metadata_json=$(python3 - <<'PY'
           import json
           from pathlib import Path
 
@@ -150,40 +176,127 @@ jobs:
           if not apk_path.exists():
               raise SystemExit(f"Universal APK not found at {apk_path}.")
 
-          print(apk_path)
+          payload = {
+              "apk_path": str(apk_path),
+              "apk_name": apk_path.name,
+              "version_name": universal_elements[0].get("versionName") or "unknown",
+              "version_code": str(universal_elements[0].get("versionCode") or "unknown"),
+          }
+          print(json.dumps(payload))
           PY
           )
 
-          if [ -z "$apk_path" ]; then
+          if [ -z "$metadata_json" ]; then
             echo "Release APK not found." >&2
             exit 1
           fi
 
           commit_subject=$(git log -1 --pretty=%s)
           commit_author=$(git log -1 --pretty=%an)
-          caption=$(COMMIT_SUBJECT="${commit_subject}" COMMIT_AUTHOR="${commit_author}" DURATION_HUMAN="${DURATION_HUMAN}" python3 - <<'PY'
+          commit_body=$(git log -1 --pretty=%b)
+          git_hash=$(git rev-parse --short HEAD)
+          caption=$(METADATA_JSON="${metadata_json}" COMMIT_SUBJECT="${commit_subject}" COMMIT_BODY="${commit_body}" COMMIT_AUTHOR="${commit_author}" DURATION_HUMAN="${DURATION_HUMAN}" GIT_BRANCH="${GIT_BRANCH}" GIT_HASH="${git_hash}" SIGNER_NAME="${SIGNER_NAME}" python3 - <<'PY'
+          import json
           import os
 
+          metadata = json.loads(os.environ["METADATA_JSON"])
           commit_subject = os.environ["COMMIT_SUBJECT"]
+          commit_body = os.environ["COMMIT_BODY"]
           commit_author = os.environ["COMMIT_AUTHOR"]
           duration_human = os.environ["DURATION_HUMAN"]
+          git_branch = os.environ["GIT_BRANCH"]
+          git_hash = os.environ["GIT_HASH"]
+          signer_name = os.environ["SIGNER_NAME"] or "Unknown signer"
 
-          suffix = f"\nCommit author: {commit_author}\nBuild time: {duration_human}\n"
+          def first_paragraph(text: str) -> str:
+              paragraphs = []
+              current = []
+              for raw_line in text.splitlines():
+                  line = raw_line.strip()
+                  if not line:
+                      if current:
+                          paragraphs.append(" ".join(current))
+                          current = []
+                      continue
+                  current.append(line)
+              if current:
+                  paragraphs.append(" ".join(current))
+              return paragraphs[0] if paragraphs else ""
+
+          summary = first_paragraph(commit_body)
+
+          def render(subject: str, summary_text: str) -> str:
+              lines = [
+                  f"Version: {metadata['version_name']} ({metadata['version_code']})",
+                  f"APK: {metadata['apk_name']}",
+                  f"Commit: {subject}",
+                  "",
+              ]
+              if summary_text:
+                  lines.append(summary_text)
+                  lines.append("")
+              lines.extend(
+                  [
+                      f"Author: {commit_author}",
+                      f"Branch: {git_branch}@{git_hash}",
+                      f"Build time: {duration_human}",
+                      "",
+                      f"Signature: verified : by {signer_name}",
+                  ]
+              )
+              return "\n".join(lines)
+
+          def truncate(text: str, limit: int) -> str:
+              if limit <= 0:
+                  return ""
+              if len(text) <= limit:
+                  return text
+              if limit <= 3:
+                  return text[:limit]
+              return text[: limit - 3].rstrip() + "..."
+
           max_caption_length = 1024
-          max_subject_length = max_caption_length - len(suffix)
-          if max_subject_length < 1:
-              raise SystemExit("Telegram caption template exceeds the 1024 character limit.")
 
-          if len(commit_subject) > max_subject_length:
-              commit_subject = commit_subject[: max_subject_length - 3] + "..."
+          caption = render(commit_subject, summary)
+          if len(caption) > max_caption_length and summary:
+              without_summary = render(commit_subject, "")
+              summary_budget = max_caption_length - len(without_summary) - 2
+              summary = truncate(summary, summary_budget)
+              caption = render(commit_subject, summary)
 
-          print(f"{commit_subject}{suffix}", end="")
+          if len(caption) > max_caption_length:
+              base_without_subject = render("", summary)
+              subject_budget = max_caption_length - len(base_without_subject)
+              if subject_budget < 1:
+                  raise SystemExit("Telegram caption template exceeds the 1024 character limit.")
+              commit_subject = truncate(commit_subject, subject_budget)
+              caption = render(commit_subject, summary)
+
+          print(caption, end="")
+          PY
+          )
+
+          apk_path=$(METADATA_JSON="${metadata_json}" python3 - <<'PY'
+          import json
+          import os
+
+          metadata = json.loads(os.environ["METADATA_JSON"])
+          print(metadata["apk_path"], end="")
+          PY
+          )
+
+          apk_name=$(METADATA_JSON="${metadata_json}" python3 - <<'PY'
+          import json
+          import os
+
+          metadata = json.loads(os.environ["METADATA_JSON"])
+          print(metadata["apk_name"], end="")
           PY
           )
 
           {
             echo "apk_path=$apk_path"
-            echo "apk_name=$(basename "$apk_path")"
+            echo "apk_name=$apk_name"
             delimiter="CAPTION_$(date +%s)_$$"
             echo "caption<<${delimiter}"
             printf '%s\n' "$caption"
