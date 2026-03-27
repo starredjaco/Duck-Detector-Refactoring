@@ -18,6 +18,15 @@ namespace duckdetector::nativeroot {
         int cgroup_uid = -1;
         int pid = -1;
         int proc_uid = -1;
+        long long starttime_ticks = -1;
+        int kill_errno = -1;
+        int getsid_value = -1;
+        int getsid_errno = -1;
+        int getpgid_value = -1;
+        int getpgid_errno = -1;
+        int sched_policy = -1;
+        int sched_errno = -1;
+        int pidfd_errno = -1;
         std::string proc_context;
         std::string comm;
         std::string cmdline;

@@ -333,7 +333,7 @@ class NativeRootRepository(
                     cgroupResult.available -> NativeRootMethodOutcome.CLEAN
                     else -> NativeRootMethodOutcome.SUPPORT
                 },
-                detail = "Enumerate per-UID cgroup trees and compare native getdents visibility against Java File view plus /proc/<pid>/status UID ownership. ${cgroupResult.detail}".trim(),
+                detail = "Enumerate per-UID cgroup trees and compare native getdents visibility against Java File view, /proc/<pid>/status UID ownership, and PID liveness syscalls such as kill/getsid/getpgid/sched_getscheduler/pidfd_open. ${cgroupResult.detail}".trim(),
             ),
             NativeRootMethodResult(
                 label = "kernelTraces",

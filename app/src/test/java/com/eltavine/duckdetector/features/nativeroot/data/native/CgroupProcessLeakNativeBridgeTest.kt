@@ -20,7 +20,7 @@ class CgroupProcessLeakNativeBridgeTest {
                 PROC_DENIED=1
                 PATH=/sys/fs/cgroup/uid_2000	2000	1	2
                 PATH=/acct/uid_2000	2000	0	0
-                ENTRY=/sys/fs/cgroup/uid_2000	2000	321	0	u:r:su:s0	lspd\tdaemon	/system/bin/lspd\0--service
+                ENTRY=/sys/fs/cgroup/uid_2000	2000	321	0	998877	1	123	0	456	0	0	0	0	u:r:su:s0	lspd\tdaemon	/system/bin/lspd\0--service
             """.trimIndent(),
         )
 
@@ -31,9 +31,32 @@ class CgroupProcessLeakNativeBridgeTest {
         assertEquals(1, snapshot.procDeniedCount)
         assertEquals(2, snapshot.paths.size)
         assertEquals(1, snapshot.entries.size)
+        assertEquals(998877L, snapshot.entries.single().startTimeTicks)
+        assertEquals(1, snapshot.entries.single().killErrno)
+        assertEquals(123, snapshot.entries.single().sid)
+        assertEquals(456, snapshot.entries.single().pgid)
+        assertEquals(0, snapshot.entries.single().schedulerPolicy)
+        assertEquals(0, snapshot.entries.single().pidfdErrno)
         assertEquals("u:r:su:s0", snapshot.entries.single().procContext)
         assertEquals("lspd\tdaemon", snapshot.entries.single().comm)
         assertEquals("/system/bin/lspd\u0000--service", snapshot.entries.single().cmdline)
+    }
+
+    @Test
+    fun `parse keeps legacy entry format working`() {
+        val snapshot = bridge.parse(
+            """
+                AVAILABLE=1
+                ENTRY=/sys/fs/cgroup/uid_2000	2000	321	0	u:r:su:s0	lspd	/system/bin/lspd
+            """.trimIndent(),
+        )
+
+        assertEquals(1, snapshot.entries.size)
+        assertEquals("u:r:su:s0", snapshot.entries.single().procContext)
+        assertEquals("lspd", snapshot.entries.single().comm)
+        assertEquals("/system/bin/lspd", snapshot.entries.single().cmdline)
+        assertEquals(null, snapshot.entries.single().startTimeTicks)
+        assertEquals(null, snapshot.entries.single().pidfdErrno)
     }
 
     @Test

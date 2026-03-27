@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <sstream>
 #include <set>
 #include <string>
 #include <vector>
@@ -26,7 +27,18 @@ namespace duckdetector::nativeroot {
             char d_name[];
         };
 
-        constexpr const char *kUidPathPatterns[] = {
+        constexpr const char *kUidRootPaths[] = {
+                "/sys/fs/cgroup",
+                "/sys/fs/cgroup/apps",
+                "/sys/fs/cgroup/system",
+                "/dev/cg2_bpf",
+                "/dev/cg2_bpf/apps",
+                "/dev/cg2_bpf/system",
+                "/acct",
+                "/dev/memcg/apps",
+        };
+
+        constexpr const char *kFallbackUidPathPatterns[] = {
                 "/sys/fs/cgroup/uid_%d",
                 "/sys/fs/cgroup/apps/uid_%d",
                 "/sys/fs/cgroup/system/uid_%d",
@@ -36,23 +48,6 @@ namespace duckdetector::nativeroot {
                 "/acct/uid_%d",
                 "/dev/memcg/apps/uid_%d",
         };
-
-        std::vector<int> candidate_uids() {
-            std::set<int> values = {0, 1000, 2000, static_cast<int>(getuid())};
-            return {values.begin(), values.end()};
-        }
-
-        std::vector<std::pair<std::string, int>> candidate_uid_paths() {
-            std::vector<std::pair<std::string, int>> paths;
-            for (const int uid: candidate_uids()) {
-                for (const char *pattern: kUidPathPatterns) {
-                    char buffer[256];
-                    std::snprintf(buffer, sizeof(buffer), pattern, uid);
-                    paths.emplace_back(buffer, uid);
-                }
-            }
-            return paths;
-        }
 
         int parse_pid_dir(const char *name, const size_t max_length) {
             constexpr char kPrefix[] = "pid_";
@@ -73,6 +68,27 @@ namespace duckdetector::nativeroot {
                 return -1;
             }
             return std::atoi(pid_chars);
+        }
+
+        int parse_uid_dir(const char *name, const size_t max_length) {
+            constexpr char kPrefix[] = "uid_";
+            if (name == nullptr) {
+                return -1;
+            }
+            if (std::strncmp(name, kPrefix, sizeof(kPrefix) - 1) != 0) {
+                return -1;
+            }
+
+            const char *uid_chars = name + sizeof(kPrefix) - 1;
+            if (*uid_chars == '\0') {
+                return -1;
+            }
+            if (!is_numeric_name(uid_chars,
+                                 max_length >= sizeof(kPrefix) ? max_length - (sizeof(kPrefix) - 1)
+                                                               : 0)) {
+                return -1;
+            }
+            return std::atoi(uid_chars);
         }
 
         std::string read_bytes_file(const char *path, const size_t max_size) {
@@ -120,6 +136,112 @@ namespace duckdetector::nativeroot {
 
         std::string read_proc_line(int pid, const char *suffix, size_t max_size) {
             return trim_copy(read_proc_text(pid, suffix, max_size));
+        }
+
+        long long parse_proc_starttime_ticks(const std::string &stat_text) {
+            if (stat_text.empty()) {
+                return -1;
+            }
+
+            const size_t close_paren = stat_text.rfind(')');
+            if (close_paren == std::string::npos || close_paren + 2 >= stat_text.size()) {
+                return -1;
+            }
+
+            std::istringstream input(stat_text.substr(close_paren + 2));
+            std::string token;
+            for (int field = 3; field <= 22; ++field) {
+                if (!(input >> token)) {
+                    return -1;
+                }
+                if (field == 22) {
+                    return std::atoll(token.c_str());
+                }
+            }
+            return -1;
+        }
+
+        void append_uid_path(
+                const std::string &path,
+                int uid,
+                std::vector<std::pair<std::string, int>> &paths,
+                std::set<std::string> &dedupe
+        ) {
+            if (!dedupe.insert(path).second) {
+                return;
+            }
+            paths.emplace_back(path, uid);
+        }
+
+        void collect_uid_paths_from_root(
+                const char *root_path,
+                std::vector<std::pair<std::string, int>> &paths,
+                std::set<std::string> &dedupe
+        ) {
+            const int root_fd = syscall_openat_readonly(root_path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+            if (root_fd < 0) {
+                return;
+            }
+
+            char dent_buffer[4096];
+            while (true) {
+                const int bytes_read = syscall_getdents64_fd(root_fd, dent_buffer, sizeof(dent_buffer));
+                if (bytes_read <= 0) {
+                    break;
+                }
+
+                int offset = 0;
+                while (offset < bytes_read) {
+                    if (offset + static_cast<int>(offsetof(linux_dirent64, d_name)) >= bytes_read) {
+                        break;
+                    }
+
+                    auto *entry = reinterpret_cast<linux_dirent64 *>(dent_buffer + offset);
+                    if (entry->d_reclen == 0 || offset + entry->d_reclen > bytes_read) {
+                        break;
+                    }
+
+                    const size_t max_name_length =
+                            entry->d_reclen - offsetof(linux_dirent64, d_name);
+                    const bool dir_like = entry->d_type == DT_DIR || entry->d_type == DT_UNKNOWN;
+                    const int uid = dir_like ? parse_uid_dir(entry->d_name, max_name_length) : -1;
+                    if (uid >= 0) {
+                        append_uid_path(
+                                std::string(root_path) + "/" + std::string(entry->d_name),
+                                uid,
+                                paths,
+                                dedupe
+                        );
+                    }
+
+                    offset += entry->d_reclen;
+                }
+            }
+
+            syscall_close_fd(root_fd);
+        }
+
+        std::vector<std::pair<std::string, int>> candidate_uid_paths() {
+            std::vector<std::pair<std::string, int>> paths;
+            std::set<std::string> dedupe;
+
+            for (const char *root_path: kUidRootPaths) {
+                collect_uid_paths_from_root(root_path, paths, dedupe);
+            }
+
+            if (!paths.empty()) {
+                return paths;
+            }
+
+            const std::set<int> fallback_uids = {0, 1000, 2000, static_cast<int>(getuid())};
+            for (const int uid: fallback_uids) {
+                for (const char *pattern: kFallbackUidPathPatterns) {
+                    char buffer[256];
+                    std::snprintf(buffer, sizeof(buffer), pattern, uid);
+                    append_uid_path(buffer, uid, paths, dedupe);
+                }
+            }
+            return paths;
         }
 
     }  // namespace
@@ -177,9 +299,15 @@ namespace duckdetector::nativeroot {
                         snapshot.process_count += 1;
 
                         const std::string status_text = read_proc_text(pid, "status", 4096);
+                        const std::string stat_text = read_proc_text(pid, "stat", 512);
                         const std::string proc_context = read_proc_line(pid, "attr/current", 256);
                         const std::string comm = read_proc_line(pid, "comm", 256);
                         const std::string cmdline = read_proc_text(pid, "cmdline", 512);
+                        const SyscallProbeResult kill_result = probe_kill_zero(pid);
+                        const SyscallProbeResult getsid_result = probe_getsid(pid);
+                        const SyscallProbeResult getpgid_result = probe_getpgid(pid);
+                        const SyscallProbeResult sched_result = probe_sched_getscheduler(pid);
+                        const SyscallProbeResult pidfd_result = probe_pidfd_open(pid);
                         if (status_text.empty()) {
                             snapshot.proc_denied_count += 1;
                         }
@@ -192,6 +320,21 @@ namespace duckdetector::nativeroot {
                                             .cgroup_uid = uid,
                                             .pid = pid,
                                             .proc_uid = parse_status_uid(status_text),
+                                            .starttime_ticks = parse_proc_starttime_ticks(stat_text),
+                                            .kill_errno = kill_result.error,
+                                            .getsid_value = getsid_result.value >= 0
+                                                            ? static_cast<int>(getsid_result.value)
+                                                            : -1,
+                                            .getsid_errno = getsid_result.error,
+                                            .getpgid_value = getpgid_result.value >= 0
+                                                             ? static_cast<int>(getpgid_result.value)
+                                                             : -1,
+                                            .getpgid_errno = getpgid_result.error,
+                                            .sched_policy = sched_result.value >= 0
+                                                            ? static_cast<int>(sched_result.value)
+                                                            : -1,
+                                            .sched_errno = sched_result.error,
+                                            .pidfd_errno = pidfd_result.error,
                                             .proc_context = proc_context,
                                             .comm = comm,
                                             .cmdline = cmdline,

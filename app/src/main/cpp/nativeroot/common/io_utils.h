@@ -8,6 +8,11 @@
 
 namespace duckdetector::nativeroot {
 
+    struct SyscallProbeResult {
+        long value = -1;
+        int error = 0;
+    };
+
     int syscall_openat_readonly(const char *path, int flags);
 
     ssize_t syscall_read_fd(int fd, void *buffer, size_t count);
@@ -15,6 +20,16 @@ namespace duckdetector::nativeroot {
     int syscall_close_fd(int fd);
 
     int syscall_getdents64_fd(int fd, void *buffer, size_t count);
+
+    SyscallProbeResult probe_kill_zero(pid_t pid);
+
+    SyscallProbeResult probe_getsid(pid_t pid);
+
+    SyscallProbeResult probe_getpgid(pid_t pid);
+
+    SyscallProbeResult probe_sched_getscheduler(pid_t pid);
+
+    SyscallProbeResult probe_pidfd_open(pid_t pid);
 
     std::string read_text_file(const char *path, size_t max_size);
 

@@ -1,5 +1,6 @@
 #include "nativeroot/common/io_utils.h"
 
+#include <cerrno>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
@@ -32,6 +33,95 @@ namespace duckdetector::nativeroot {
         (void)buffer;
         (void)count;
         return -1;
+#endif
+    }
+
+    SyscallProbeResult probe_kill_zero(const pid_t pid) {
+#if defined(__NR_kill)
+        errno = 0;
+        const long value = syscall(__NR_kill, pid, 0);
+        return SyscallProbeResult{
+                .value = value,
+                .error = value >= 0 ? 0 : errno,
+        };
+#else
+        (void) pid;
+        return SyscallProbeResult{
+                .value = -1,
+                .error = ENOSYS,
+        };
+#endif
+    }
+
+    SyscallProbeResult probe_getsid(const pid_t pid) {
+#if defined(__NR_getsid)
+        errno = 0;
+        const long value = syscall(__NR_getsid, pid);
+        return SyscallProbeResult{
+                .value = value,
+                .error = value >= 0 ? 0 : errno,
+        };
+#else
+        (void) pid;
+        return SyscallProbeResult{
+                .value = -1,
+                .error = ENOSYS,
+        };
+#endif
+    }
+
+    SyscallProbeResult probe_getpgid(const pid_t pid) {
+#if defined(__NR_getpgid)
+        errno = 0;
+        const long value = syscall(__NR_getpgid, pid);
+        return SyscallProbeResult{
+                .value = value,
+                .error = value >= 0 ? 0 : errno,
+        };
+#else
+        (void) pid;
+        return SyscallProbeResult{
+                .value = -1,
+                .error = ENOSYS,
+        };
+#endif
+    }
+
+    SyscallProbeResult probe_sched_getscheduler(const pid_t pid) {
+#if defined(__NR_sched_getscheduler)
+        errno = 0;
+        const long value = syscall(__NR_sched_getscheduler, pid);
+        return SyscallProbeResult{
+                .value = value,
+                .error = value >= 0 ? 0 : errno,
+        };
+#else
+        (void) pid;
+        return SyscallProbeResult{
+                .value = -1,
+                .error = ENOSYS,
+        };
+#endif
+    }
+
+    SyscallProbeResult probe_pidfd_open(const pid_t pid) {
+#if defined(__NR_pidfd_open)
+        errno = 0;
+        const long value = syscall(__NR_pidfd_open, pid, 0U);
+        const int error = value >= 0 ? 0 : errno;
+        if (value >= 0) {
+            syscall_close_fd(static_cast<int>(value));
+        }
+        return SyscallProbeResult{
+                .value = value,
+                .error = error,
+        };
+#else
+        (void) pid;
+        return SyscallProbeResult{
+                .value = -1,
+                .error = ENOSYS,
+        };
 #endif
     }
 

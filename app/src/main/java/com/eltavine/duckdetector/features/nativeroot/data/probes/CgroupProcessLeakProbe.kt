@@ -37,19 +37,31 @@ internal data class CgroupProcessRule(
     val label: String,
 )
 
+internal data class CgroupProcessLiveness(
+    val confirmed: Boolean,
+    val evidence: List<String>,
+)
+
 class CgroupProcessLeakProbe(
     private val nativeBridge: CgroupProcessLeakNativeBridge = CgroupProcessLeakNativeBridge(),
 ) {
 
     fun run(): CgroupProcessLeakProbeResult {
         val nativeSnapshot = nativeBridge.collectSnapshot()
-        val javaView = collectJavaView(candidateUidPaths())
-        return evaluate(nativeSnapshot, javaView)
+        val javaView = collectJavaView(
+            nativeSnapshot.paths.map(CgroupProcessLeakNativePath::path).ifEmpty { candidateUidPaths() },
+        )
+        return evaluate(
+            nativeSnapshot = nativeSnapshot,
+            javaView = javaView,
+            selfPid = Process.myPid(),
+        )
     }
 
     internal fun evaluate(
         nativeSnapshot: CgroupProcessLeakNativeSnapshot,
         javaView: CgroupProcessJavaView,
+        selfPid: Int = -1,
     ): CgroupProcessLeakProbeResult {
         val findings = mutableListOf<NativeRootFinding>()
         val dedupe = linkedSetOf<String>()
@@ -57,12 +69,18 @@ class CgroupProcessLeakProbe(
         val nativePathsByPath = nativeSnapshot.paths.associateBy(CgroupProcessLeakNativePath::path)
 
         nativeSnapshot.entries.sortedWith(compareBy({ it.uidPath }, { it.pid })).forEach { entry ->
+            if (entry.pid == selfPid) {
+                return@forEach
+            }
+
             val rule = suspiciousRules.firstOrNull { entry.matchText.contains(it.token) }
             val contextRule =
                 suspiciousContextRules.firstOrNull { entry.contextText.contains(it.token) }
             val javaVisible = javaPidsByPath[entry.uidPath]?.contains(entry.pid) == true
+            val liveness = entry.liveness()
+            val uidMismatch = entry.procUid != null && entry.procUid != entry.cgroupUid
 
-            if (entry.procUid != null && entry.procUid != entry.cgroupUid) {
+            if (uidMismatch) {
                 val key = "uid-mismatch|${entry.uidPath}|${entry.pid}|${entry.procUid}"
                 if (dedupe.add(key)) {
                     findings += NativeRootFinding(
@@ -81,10 +99,11 @@ class CgroupProcessLeakProbe(
                             append("/status reported uid=")
                             append(entry.procUid)
                             append(".")
+                            append(entry.livenessDetail(liveness))
                             append(entry.describe())
                         },
                         group = NativeRootGroup.PROCESS,
-                        severity = NativeRootFindingSeverity.DANGER,
+                        severity = NativeRootFindingSeverity.WARNING,
                         detailMonospace = true,
                     )
                 }
@@ -101,6 +120,7 @@ class CgroupProcessLeakProbe(
                             append("Native cgroup scan exposed a suspicious process token under ")
                             append(entry.uidPath)
                             append('.')
+                            append(entry.livenessDetail(liveness))
                             append(entry.describe())
                         },
                         group = NativeRootGroup.PROCESS,
@@ -130,6 +150,7 @@ class CgroupProcessLeakProbe(
                             append(" with suspicious SELinux context ")
                             append(entry.procContext.ifBlank { "<empty>" })
                             append('.')
+                            append(entry.livenessDetail(liveness))
                             append(entry.describe())
                         },
                         group = NativeRootGroup.PROCESS,
@@ -141,11 +162,12 @@ class CgroupProcessLeakProbe(
 
             val shouldCheckVisibility =
                 rule != null || contextRule != null ||
-                        (entry.procUid != null && entry.procUid != entry.cgroupUid)
+                        uidMismatch
             if (shouldCheckVisibility && !javaVisible) {
                 val pathState = nativePathsByPath[entry.uidPath]
                 val key = "visibility|${entry.uidPath}|${entry.pid}"
                 if (dedupe.add(key)) {
+                    val confirmedHiddenSuspicious = liveness.confirmed && (rule != null || contextRule != null)
                     findings += NativeRootFinding(
                         id = "cgroup_visibility_${entry.pid}",
                         label = "Selective cgroup visibility",
@@ -161,11 +183,21 @@ class CgroupProcessLeakProbe(
                                 append(it.pidCount)
                                 append(')')
                             }
+                            if (liveness.confirmed) {
+                                append("; native syscall liveness confirmed PID existence")
+                            } else {
+                                append("; syscall liveness did not confirm PID existence")
+                            }
                             append('.')
+                            append(entry.livenessDetail(liveness))
                             append(entry.describe())
                         },
                         group = NativeRootGroup.PROCESS,
-                        severity = NativeRootFindingSeverity.DANGER,
+                        severity = if (confirmedHiddenSuspicious) {
+                            NativeRootFindingSeverity.DANGER
+                        } else {
+                            NativeRootFindingSeverity.WARNING
+                        },
                         detailMonospace = true,
                     )
                 }
@@ -271,6 +303,42 @@ class CgroupProcessLeakProbe(
             append(cgroupUid)
             append("\nprocUid=")
             append(procUid ?: -1)
+            startTimeTicks?.let {
+                append("\nstartTimeTicks=")
+                append(it)
+            }
+            killErrno?.let {
+                append("\nkillErrno=")
+                append(it)
+            }
+            sid?.let {
+                append("\ngetsid=")
+                append(it)
+            }
+            sidErrno?.let {
+                append("\ngetsidErrno=")
+                append(it)
+            }
+            pgid?.let {
+                append("\ngetpgid=")
+                append(it)
+            }
+            pgidErrno?.let {
+                append("\ngetpgidErrno=")
+                append(it)
+            }
+            schedulerPolicy?.let {
+                append("\nschedulerPolicy=")
+                append(it)
+            }
+            schedulerErrno?.let {
+                append("\nschedulerErrno=")
+                append(it)
+            }
+            pidfdErrno?.let {
+                append("\npidfdErrno=")
+                append(it)
+            }
             if (procContext.isNotBlank()) {
                 append("\nprocContext=")
                 append(procContext)
@@ -286,7 +354,51 @@ class CgroupProcessLeakProbe(
         }
     }
 
+    private fun CgroupProcessLeakNativeEntry.liveness(): CgroupProcessLiveness {
+        val evidence = buildList {
+            if (pidfdErrno == 0) {
+                add("pidfd_open")
+            }
+            when (killErrno) {
+                0 -> add("kill(0)=0")
+                ERRNO_PERMISSION_DENIED -> add("kill(0)=EPERM")
+            }
+            if (sidErrno == 0 && sid != null) {
+                add("getsid=$sid")
+            }
+            if (pgidErrno == 0 && pgid != null) {
+                add("getpgid=$pgid")
+            }
+            when {
+                schedulerErrno == 0 && schedulerPolicy != null ->
+                    add("sched_getscheduler=$schedulerPolicy")
+
+                schedulerErrno == ERRNO_PERMISSION_DENIED ->
+                    add("sched_getscheduler=EPERM")
+            }
+        }
+        return CgroupProcessLiveness(
+            confirmed = evidence.isNotEmpty(),
+            evidence = evidence,
+        )
+    }
+
+    private fun CgroupProcessLeakNativeEntry.livenessDetail(
+        liveness: CgroupProcessLiveness,
+    ): String {
+        return buildString {
+            append("\nLiveness: ")
+            if (liveness.confirmed) {
+                append(liveness.evidence.joinToString())
+            } else {
+                append("unconfirmed")
+            }
+        }
+    }
+
     private companion object {
+        private const val ERRNO_PERMISSION_DENIED = 1
+
         private val suspiciousRules = listOf(
             CgroupProcessRule("lspd", "LSPosed companion residue"),
             CgroupProcessRule("lsposed", "LSPosed companion residue"),

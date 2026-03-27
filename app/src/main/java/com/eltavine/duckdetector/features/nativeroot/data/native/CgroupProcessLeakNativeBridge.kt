@@ -12,6 +12,15 @@ data class CgroupProcessLeakNativeEntry(
     val cgroupUid: Int,
     val pid: Int,
     val procUid: Int?,
+    val startTimeTicks: Long? = null,
+    val killErrno: Int? = null,
+    val sid: Int? = null,
+    val sidErrno: Int? = null,
+    val pgid: Int? = null,
+    val pgidErrno: Int? = null,
+    val schedulerPolicy: Int? = null,
+    val schedulerErrno: Int? = null,
+    val pidfdErrno: Int? = null,
     val procContext: String = "",
     val comm: String,
     val cmdline: String,
@@ -69,23 +78,68 @@ class CgroupProcessLeakNativeBridge {
                     }
 
                     line.startsWith("ENTRY=") -> {
-                        val parts = line.removePrefix("ENTRY=").split('\t', limit = 7)
-                        val cgroupUid = parts.getOrNull(1)?.toIntOrNull()
-                        val pid = parts.getOrNull(2)?.toIntOrNull()
-                        val procUid = parts.getOrNull(3)?.toIntOrNull()
-                        if ((parts.size == 6 || parts.size == 7) && cgroupUid != null && pid != null) {
+                        val rawEntry = line.removePrefix("ENTRY=")
+                        val expandedParts = rawEntry.split('\t', limit = 16)
+                        val expandedCgroupUid = expandedParts.getOrNull(1)?.toIntOrNull()
+                        val expandedPid = expandedParts.getOrNull(2)?.toIntOrNull()
+                        val expandedProcUid = expandedParts.getOrNull(3)?.toIntOrNull()
+                        if (expandedParts.size == 16 &&
+                            expandedCgroupUid != null &&
+                            expandedPid != null
+                        ) {
                             entries += CgroupProcessLeakNativeEntry(
-                                uidPath = parts[0].decodeValue(),
-                                cgroupUid = cgroupUid,
-                                pid = pid,
-                                procUid = procUid?.takeIf { it >= 0 },
-                                procContext = parts.getOrNull(4)?.decodeValue().orEmpty(),
-                                comm = parts.getOrNull(if (parts.size == 7) 5 else 4)?.decodeValue()
+                                uidPath = expandedParts[0].decodeValue(),
+                                cgroupUid = expandedCgroupUid,
+                                pid = expandedPid,
+                                procUid = expandedProcUid?.takeIf { it >= 0 },
+                                startTimeTicks = expandedParts.getOrNull(4)?.toLongOrNull()
+                                    ?.takeIf { it >= 0L },
+                                killErrno = expandedParts.getOrNull(5)?.toIntOrNull()
+                                    ?.takeIf { it >= 0 },
+                                sid = expandedParts.getOrNull(6)?.toIntOrNull()
+                                    ?.takeIf { it >= 0 },
+                                sidErrno = expandedParts.getOrNull(7)?.toIntOrNull()
+                                    ?.takeIf { it >= 0 },
+                                pgid = expandedParts.getOrNull(8)?.toIntOrNull()
+                                    ?.takeIf { it >= 0 },
+                                pgidErrno = expandedParts.getOrNull(9)?.toIntOrNull()
+                                    ?.takeIf { it >= 0 },
+                                schedulerPolicy = expandedParts.getOrNull(10)?.toIntOrNull()
+                                    ?.takeIf { it >= 0 },
+                                schedulerErrno = expandedParts.getOrNull(11)?.toIntOrNull()
+                                    ?.takeIf { it >= 0 },
+                                pidfdErrno = expandedParts.getOrNull(12)?.toIntOrNull()
+                                    ?.takeIf { it >= 0 },
+                                procContext = expandedParts.getOrNull(13)?.decodeValue().orEmpty(),
+                                comm = expandedParts.getOrNull(14)?.decodeValue()
                                     .orEmpty(),
-                                cmdline = parts.getOrNull(if (parts.size == 7) 6 else 5)
+                                cmdline = expandedParts.getOrNull(15)
                                     ?.decodeValue()
                                     .orEmpty(),
                             )
+                        } else {
+                            val legacyParts = rawEntry.split('\t', limit = 7)
+                            val legacyCgroupUid = legacyParts.getOrNull(1)?.toIntOrNull()
+                            val legacyPid = legacyParts.getOrNull(2)?.toIntOrNull()
+                            val legacyProcUid = legacyParts.getOrNull(3)?.toIntOrNull()
+                            if ((legacyParts.size == 6 || legacyParts.size == 7) &&
+                                legacyCgroupUid != null &&
+                                legacyPid != null
+                            ) {
+                                entries += CgroupProcessLeakNativeEntry(
+                                    uidPath = legacyParts[0].decodeValue(),
+                                    cgroupUid = legacyCgroupUid,
+                                    pid = legacyPid,
+                                    procUid = legacyProcUid?.takeIf { it >= 0 },
+                                    procContext = legacyParts.getOrNull(4)?.decodeValue().orEmpty(),
+                                    comm = legacyParts.getOrNull(if (legacyParts.size == 7) 5 else 4)
+                                        ?.decodeValue()
+                                        .orEmpty(),
+                                    cmdline = legacyParts.getOrNull(if (legacyParts.size == 7) 6 else 5)
+                                        ?.decodeValue()
+                                        .orEmpty(),
+                                )
+                            }
                         }
                     }
 

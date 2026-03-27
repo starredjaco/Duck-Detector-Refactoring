@@ -13,7 +13,7 @@ class CgroupProcessLeakProbeTest {
     private val probe = CgroupProcessLeakProbe()
 
     @Test
-    fun `uid mismatch and selective visibility escalate to danger`() {
+    fun `confirmed hidden suspicious process keeps selective visibility at danger`() {
         val result = probe.evaluate(
             nativeSnapshot = CgroupProcessLeakNativeSnapshot(
                 available = true,
@@ -35,6 +35,15 @@ class CgroupProcessLeakProbeTest {
                         cgroupUid = 0,
                         pid = 4242,
                         procUid = 2000,
+                        startTimeTicks = 998877L,
+                        killErrno = 1,
+                        sid = 123,
+                        sidErrno = 0,
+                        pgid = 456,
+                        pgidErrno = 0,
+                        schedulerPolicy = 0,
+                        schedulerErrno = 0,
+                        pidfdErrno = 0,
                         procContext = "u:r:su:s0",
                         comm = "lspd",
                         cmdline = "/system/bin/lspd",
@@ -52,7 +61,7 @@ class CgroupProcessLeakProbeTest {
         assertTrue(
             result.findings.any {
                 it.label == "Cgroup UID mismatch" &&
-                        it.severity == NativeRootFindingSeverity.DANGER
+                        it.severity == NativeRootFindingSeverity.WARNING
             },
         )
         assertTrue(
@@ -74,6 +83,106 @@ class CgroupProcessLeakProbeTest {
             },
         )
         assertEquals(4, result.hitCount)
+    }
+
+    @Test
+    fun `unconfirmed hidden suspicious process downgrades visibility to warning`() {
+        val result = probe.evaluate(
+            nativeSnapshot = CgroupProcessLeakNativeSnapshot(
+                available = true,
+                pathCheckCount = 32,
+                accessiblePathCount = 1,
+                processCount = 1,
+                procDeniedCount = 1,
+                paths = listOf(
+                    CgroupProcessLeakNativePath(
+                        path = "/sys/fs/cgroup/uid_0",
+                        uid = 0,
+                        accessible = true,
+                        pidCount = 1,
+                    ),
+                ),
+                entries = listOf(
+                    CgroupProcessLeakNativeEntry(
+                        uidPath = "/sys/fs/cgroup/uid_0",
+                        cgroupUid = 0,
+                        pid = 3131,
+                        procUid = 0,
+                        procContext = "u:r:init:s0",
+                        comm = "lspd",
+                        cmdline = "/system/bin/lspd",
+                    ),
+                ),
+            ),
+            javaView = CgroupProcessJavaView(
+                checkedPathCount = 32,
+                accessiblePaths = emptySet(),
+                pidEntriesByPath = emptyMap(),
+            ),
+        )
+
+        assertTrue(
+            result.findings.any {
+                it.label == "Selective cgroup visibility" &&
+                        it.severity == NativeRootFindingSeverity.WARNING
+            },
+        )
+        assertTrue(
+            result.findings.none {
+                it.label == "Selective cgroup visibility" &&
+                        it.severity == NativeRootFindingSeverity.DANGER
+            },
+        )
+    }
+
+    @Test
+    fun `self pid is excluded from cgroup findings`() {
+        val result = probe.evaluate(
+            nativeSnapshot = CgroupProcessLeakNativeSnapshot(
+                available = true,
+                pathCheckCount = 32,
+                accessiblePathCount = 1,
+                processCount = 1,
+                procDeniedCount = 0,
+                paths = listOf(
+                    CgroupProcessLeakNativePath(
+                        path = "/sys/fs/cgroup/uid_2000",
+                        uid = 2000,
+                        accessible = true,
+                        pidCount = 1,
+                    ),
+                ),
+                entries = listOf(
+                    CgroupProcessLeakNativeEntry(
+                        uidPath = "/sys/fs/cgroup/uid_2000",
+                        cgroupUid = 2000,
+                        pid = 5151,
+                        procUid = 2000,
+                        startTimeTicks = 999L,
+                        killErrno = 0,
+                        sid = 5151,
+                        sidErrno = 0,
+                        pgid = 5151,
+                        pgidErrno = 0,
+                        schedulerPolicy = 0,
+                        schedulerErrno = 0,
+                        pidfdErrno = 0,
+                        procContext = "u:r:su:s0",
+                        comm = "lspd",
+                        cmdline = "/system/bin/lspd",
+                    ),
+                ),
+            ),
+            javaView = CgroupProcessJavaView(
+                checkedPathCount = 32,
+                accessiblePaths = emptySet(),
+                pidEntriesByPath = emptyMap(),
+            ),
+            selfPid = 5151,
+        )
+
+        assertTrue(result.findings.isEmpty())
+        assertEquals(0, result.hitCount)
     }
 
     @Test

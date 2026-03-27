@@ -67,7 +67,16 @@ Java_com_eltavine_duckdetector_features_nativeroot_data_native_CgroupProcessLeak
                << entry.cgroup_uid << '\t'
                << entry.pid << '\t'
                << entry.proc_uid << '\t'
-                << escape_value(entry.proc_context) << '\t'
+               << entry.starttime_ticks << '\t'
+               << entry.kill_errno << '\t'
+               << entry.getsid_value << '\t'
+               << entry.getsid_errno << '\t'
+               << entry.getpgid_value << '\t'
+               << entry.getpgid_errno << '\t'
+               << entry.sched_policy << '\t'
+               << entry.sched_errno << '\t'
+               << entry.pidfd_errno << '\t'
+               << escape_value(entry.proc_context) << '\t'
                << escape_value(entry.comm) << '\t'
                << escape_value(entry.cmdline) << '\n';
     }
