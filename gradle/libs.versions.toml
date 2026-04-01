@@ -16,6 +16,7 @@ composeBom = "2026.03.01"
 material3 = "1.5.0-alpha16"
 datastore = "1.2.1"
 bouncycastle = "1.83"
+hiddenApiBypass = "6.1"
 soterWrapper = "2.0.7"
 coroutines = "1.10.2"
 composeIcons = "1.1.1"
@@ -43,6 +44,7 @@ androidx-material3 = { group = "androidx.compose.material3", name = "material3",
 androidx-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
+hiddenapibypass = { group = "org.lsposed.hiddenapibypass", name = "hiddenapibypass", version.ref = "hiddenApiBypass" }
 soter-wrapper = { group = "com.github.Tencent.soter", name = "soter-wrapper", version.ref = "soterWrapper" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 compose-icons-simple = { module = "br.com.devsrsouza.compose.icons:simple-icons-android", version.ref = "composeIcons" }

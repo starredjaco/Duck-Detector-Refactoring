@@ -1,0 +1,61 @@
+package com.eltavine.duckdetector.features.tee.data.verification.keystore
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class TimingSideChannelFormattingTest {
+
+    @Test
+    fun `partial failure reason appends warning to detail`() {
+        val detail = buildTimingSideChannelDetail(
+            source = "keystore2_security_level_proxy",
+            timerSource = "arm64_cntvct",
+            affinity = "bound_cpu0",
+            avgAttestedMillis = 0.310,
+            avgNonAttestedMillis = null,
+            diffMillis = null,
+            suspicious = false,
+            sampleCount = 1000,
+            warmupCount = 5,
+            measurementDetail = "securityLevel.getKeyEntry timing via private binder proxy",
+            timerFallbackReason = null,
+            partialFailureReason = "non-attested path unavailable",
+        )
+
+        assertTrue(detail.contains("securityLevel.getKeyEntry timing via private binder proxy"))
+        assertTrue(detail.contains("partialFailure=non-attested path unavailable"))
+        assertTrue(detail.contains("timer=arm64_cntvct"))
+    }
+
+    @Test
+    fun `stable timer helper treats register timer as hard requirement when requested`() {
+        val stable = stableTimerReadNs(
+            preferRegisterTimer = true,
+            registerTimerSource = { 42L },
+            monotonicSource = { 7L },
+        )
+
+        assertEquals(42L, stable)
+    }
+
+    @Test(expected = IllegalStateException::class)
+    fun `stable timer helper fails instead of silently falling back when register timer read fails`() {
+        stableTimerReadNs(
+            preferRegisterTimer = true,
+            registerTimerSource = { null },
+            monotonicSource = { 7L },
+        )
+    }
+
+    @Test
+    fun `stable timer helper uses monotonic only when register timer not requested`() {
+        val stable = stableTimerReadNs(
+            preferRegisterTimer = false,
+            registerTimerSource = { null },
+            monotonicSource = { 7L },
+        )
+
+        assertEquals(7L, stable)
+    }
+}

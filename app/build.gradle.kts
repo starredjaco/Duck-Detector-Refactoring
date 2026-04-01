@@ -201,6 +201,7 @@ dependencies {
     implementation(libs.aboutlibraries.compose.m3)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.bouncycastle.bcprov)
+    implementation(libs.hiddenapibypass)
     implementation(libs.soter.wrapper)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.junit)

@@ -179,6 +179,15 @@ class TeeReportReducer(
 
     private fun collectSupplementaryIndicators(artifacts: TeeScanArtifacts): List<TeeEvidenceItem> {
         return buildList {
+            if (artifacts.timingSideChannel.measurementAvailable && artifacts.timingSideChannel.suspicious) {
+                add(
+                    fact(
+                        "Timing side-channel",
+                        timingSideChannelSummary(artifacts),
+                        TeeSignalLevel.WARN,
+                    )
+                )
+            }
             if (artifacts.keystore2Hook.javaHookDetected) {
                 add(
                     fact(
@@ -527,6 +536,13 @@ class TeeReportReducer(
                             "Timing",
                             timingValue(artifacts),
                             if (artifacts.timing.suspicious) TeeSignalLevel.WARN else TeeSignalLevel.INFO
+                        )
+                    )
+                    add(
+                        fact(
+                            "Timing side-channel",
+                            timingSideChannelValue(artifacts),
+                            timingSideChannelLevel(artifacts),
                         )
                     )
                     add(
@@ -966,6 +982,54 @@ class TeeReportReducer(
         }
     }
 
+    private fun timingSideChannelValue(artifacts: TeeScanArtifacts): String {
+        val result = artifacts.timingSideChannel
+        val timerSource = timingSideChannelTimerSourceLabel(result.timerSource, result.detail)
+        val affinity = when {
+            result.affinity.isBlank() || result.affinity == "unknown" -> "affinity unknown"
+            else -> result.affinity
+        }
+        val avgAttested = result.avgAttestedMillis?.let { String.format(Locale.US, "%.3fms", it) } ?: "n/a"
+        val avgNonAttested = result.avgNonAttestedMillis?.let { String.format(Locale.US, "%.3fms", it) } ?: "n/a"
+        val diff = result.diffMillis?.let { String.format(Locale.US, "%.3fms", it) } ?: "n/a"
+        val state = when {
+            !result.probeRan -> "Skipped"
+            !result.measurementAvailable -> "Measurement unavailable"
+            result.suspicious -> "Positive"
+            else -> "Not positive"
+        }
+        val reason = result.failureReason?.takeIf { it.isNotBlank() }?.let { " • reason $it" }.orEmpty()
+        return "$timerSource • $affinity • attested $avgAttested • non-attested $avgNonAttested • diff $diff • threshold ±0.3ms • $state$reason"
+    }
+
+    private fun timingSideChannelSummary(artifacts: TeeScanArtifacts): String {
+        val result = artifacts.timingSideChannel
+        val timerSource = timingSideChannelTimerSourceLabel(result.timerSource, result.detail)
+        if (!result.measurementAvailable) {
+            return "$timerSource timing side-channel could not finish measurement; ${result.failureReason ?: "reason unavailable"}."
+        }
+        val thresholdDirection = result.diffMillis?.let { diff ->
+            when {
+                diff > 0.3 -> "diff exceeded +0.3ms"
+                diff < -0.3 -> "diff went below -0.3ms"
+                else -> "diff stayed within +/-0.3ms"
+            }
+        } ?: "diff unavailable"
+        return "$timerSource timing side-channel stayed supplementary; $thresholdDirection."
+    }
+
+    private fun timingSideChannelTimerSourceLabel(timerSource: String, detail: String): String {
+        val normalized = timerSource.lowercase(Locale.US)
+        val lowered = detail.lowercase(Locale.US)
+        return when {
+            "cntvct" in normalized || "register" in normalized -> "Register timer"
+            "monotonic" in normalized || "nano" in normalized -> "Fallback timer"
+            "register" in lowered -> "Register timer"
+            "fallback" in lowered -> "Fallback timer"
+            else -> "Timer source unspecified"
+        }
+    }
+
     private fun keyboxValue(artifacts: TeeScanArtifacts): String {
         return when {
             !artifacts.keyboxImport.executed -> "Skipped"
@@ -1276,6 +1340,13 @@ class TeeReportReducer(
     private fun oversizedChallengeLevel(artifacts: TeeScanArtifacts): TeeSignalLevel = when {
         artifacts.oversizedChallenge.acceptedOversizedChallenge -> TeeSignalLevel.WARN
         else -> TeeSignalLevel.PASS
+    }
+
+    private fun timingSideChannelLevel(artifacts: TeeScanArtifacts): TeeSignalLevel = when {
+        !artifacts.timingSideChannel.probeRan -> TeeSignalLevel.INFO
+        !artifacts.timingSideChannel.measurementAvailable -> TeeSignalLevel.INFO
+        artifacts.timingSideChannel.suspicious -> TeeSignalLevel.WARN
+        else -> TeeSignalLevel.INFO
     }
 
     private fun strongBoxLevel(artifacts: TeeScanArtifacts): TeeSignalLevel = when {

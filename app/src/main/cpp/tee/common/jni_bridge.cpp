@@ -1,9 +1,11 @@
 #include <jni.h>
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
 #include "tee/common/result_codec.h"
+#include "tee/common/syscall_facade.h"
 #include "tee/der/der_probe.h"
 #include "tee/keystore/environment_probe.h"
 #include "tee/trickystore/trickystore_probe.h"
@@ -76,5 +78,50 @@ Java_com_eltavine_duckdetector_features_tee_data_native_TeeNativeBridge_nativeIn
     codec.put_bool("PRIMARY", snapshot.primary_detected);
     codec.put_bool("SECONDARY", snapshot.secondary_detected);
     codec.put_many("FINDING", snapshot.findings);
+    return to_jstring(env, codec.str());
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_eltavine_duckdetector_features_tee_data_native_TeeRegisterTimerNativeBridge_nativeIsRegisterTimerAvailable(
+        JNIEnv *,
+        jobject) {
+    std::uint64_t value_ns = 0;
+    return ducktee::common::register_timer_time_ns(&value_ns) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_eltavine_duckdetector_features_tee_data_native_TeeRegisterTimerNativeBridge_nativeReadRegisterTimerNs(
+        JNIEnv *,
+        jobject) {
+    std::uint64_t value_ns = 0;
+    if (!ducktee::common::register_timer_time_ns(&value_ns)) {
+        return -1;
+    }
+    return static_cast<jlong>(value_ns);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_eltavine_duckdetector_features_tee_data_native_TeeRegisterTimerNativeBridge_nativeBindCurrentThreadToCpu0(
+        JNIEnv *,
+        jobject) {
+    return ducktee::common::bind_current_thread_to_cpu0() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_eltavine_duckdetector_features_tee_data_native_TeeRegisterTimerNativeBridge_nativeSelectPreferredTimer(
+        JNIEnv *env,
+        jobject,
+        jboolean request_cpu0_affinity) {
+    ducktee::common::LocalTimerSelection selection;
+    ducktee::common::select_preferred_local_timer(request_cpu0_affinity == JNI_TRUE, &selection);
+
+    ducktee::common::ResultCodec codec;
+    codec.put_bool(
+            "REGISTER_TIMER_AVAILABLE",
+            selection.kind == ducktee::common::LocalTimerKind::Arm64Cntvct
+    );
+    codec.put("TIMER_SOURCE", selection.source_label);
+    codec.put("FALLBACK_REASON", selection.fallback_reason);
+    codec.put("AFFINITY", selection.affinity_status);
     return to_jstring(env, codec.str());
 }

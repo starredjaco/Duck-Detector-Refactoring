@@ -24,6 +24,7 @@ import com.eltavine.duckdetector.features.tee.data.verification.keystore.Operati
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.OversizedChallengeProbe
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.PureCertificateProbe
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingAnomalyProbe
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingSideChannelProbe
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.UpdateSubcomponentProbe
 import com.eltavine.duckdetector.features.tee.data.verification.rkp.RkpExtensionAnalyzer
 import com.eltavine.duckdetector.features.tee.data.verification.strongbox.StrongBoxBehaviorProbeSuite
@@ -53,6 +54,7 @@ class TeeRepository(
     private val aesGcmProbe = AesGcmRoundTripProbe()
     private val lifecycleProbe = KeyLifecycleProbe()
     private val timingProbe = TimingAnomalyProbe()
+    private val timingSideChannelProbe = TimingSideChannelProbe()
     private val oversizedChallengeProbe = OversizedChallengeProbe()
     private val keyboxImportProbe = KeyboxImportProbe(appContext)
     private val keystore2HookProbe = Keystore2HookProbe()
@@ -79,12 +81,13 @@ class TeeRepository(
                 nativeBridge.collectSnapshot(snapshot.rawCertificates.firstOrNull()?.encoded)
             val soter = runCatching { soterProbe.inspect() }.getOrDefault(TeeSoterState())
             val bootConsistency = bootConsistencyProbe.inspect(snapshot)
-            val deepChecks =
-                if (snapshot.tier == TeeTier.TEE || snapshot.tier == TeeTier.STRONGBOX) {
-                    collectDeepChecks(snapshot.tier == TeeTier.STRONGBOX, snapshot)
-                } else {
-                    DeferredChecks.skipped(snapshot)
-                }
+            val deepChecks = collectDeepChecks(
+                useStrongBox = snapshot.tier == TeeTier.STRONGBOX,
+                deepChecksAllowed = snapshot.tier == TeeTier.TEE || snapshot.tier == TeeTier.STRONGBOX,
+                snapshot = snapshot,
+                native = native,
+            )
+
 
             reducer.reduce(
                 TeeScanArtifacts(
@@ -97,6 +100,7 @@ class TeeRepository(
                     aesGcm = deepChecks.aesGcm,
                     lifecycle = deepChecks.lifecycle,
                     timing = deepChecks.timing,
+                    timingSideChannel = deepChecks.timingSideChannel,
                     oversizedChallenge = deepChecks.oversizedChallenge,
                     keyboxImport = deepChecks.keyboxImport,
                     keystore2Hook = deepChecks.keystore2Hook,
@@ -118,19 +122,27 @@ class TeeRepository(
 
     private suspend fun collectDeepChecks(
         useStrongBox: Boolean,
+        deepChecksAllowed: Boolean,
         snapshot: com.eltavine.duckdetector.features.tee.data.attestation.AttestationSnapshot,
+        native: com.eltavine.duckdetector.features.tee.data.native.NativeTeeSnapshot,
     ): DeferredChecks = coroutineScope {
+        val timingSideChannel = async {
+            timingSideChannelProbe.inspect(useStrongBox = useStrongBox, nativeSnapshot = native)
+        }
+
+        if (!deepChecksAllowed) {
+            return@coroutineScope DeferredChecks.skipped(snapshot, timingSideChannel.await())
+        }
+
         val pairConsistency = async { pairConsistencyProbe.inspect(useStrongBox = useStrongBox) }
         val aesGcm = async { aesGcmProbe.inspect(useStrongBox = useStrongBox) }
         val lifecycle = async { lifecycleProbe.inspect(useStrongBox = useStrongBox) }
         val timing = async { timingProbe.inspect(useStrongBox = useStrongBox) }
-        val oversizedChallenge =
-            async { oversizedChallengeProbe.inspect(useStrongBox = useStrongBox) }
+        val oversizedChallenge = async { oversizedChallengeProbe.inspect(useStrongBox = useStrongBox) }
         val keyboxImport = async { keyboxImportProbe.inspect() }
         val keystore2Hook = async { keystore2HookProbe.inspect() }
         val pureCertificate = async { pureCertificateProbe.inspect() }
-        val updateSubcomponent =
-            async { updateSubcomponentProbe.inspect(useStrongBox = useStrongBox) }
+        val updateSubcomponent = async { updateSubcomponentProbe.inspect(useStrongBox = useStrongBox) }
         val pruning = async { operationPruningProbe.inspect(useStrongBox = useStrongBox) }
         val dualAlgorithm = async {
             val comparison = collector.collectComparisonChains(useStrongBox = useStrongBox)
@@ -144,6 +156,7 @@ class TeeRepository(
             aesGcm = aesGcm.await(),
             lifecycle = lifecycle.await(),
             timing = timing.await(),
+            timingSideChannel = timingSideChannel.await(),
             oversizedChallenge = oversizedChallenge.await(),
             keyboxImport = keyboxImport.await(),
             keystore2Hook = keystore2Hook.await(),
@@ -155,6 +168,7 @@ class TeeRepository(
             strongBox = strongBox.await(),
         )
     }
+
 }
 
 private data class DeferredChecks(
@@ -162,6 +176,7 @@ private data class DeferredChecks(
     val aesGcm: com.eltavine.duckdetector.features.tee.data.verification.keystore.AesGcmRoundTripResult,
     val lifecycle: com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyLifecycleResult,
     val timing: com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingAnomalyResult,
+    val timingSideChannel: com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingSideChannelResult,
     val oversizedChallenge: com.eltavine.duckdetector.features.tee.data.verification.keystore.OversizedChallengeResult,
     val keyboxImport: com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyboxImportResult,
     val keystore2Hook: com.eltavine.duckdetector.features.tee.data.verification.keystore.Keystore2HookResult,
@@ -175,6 +190,7 @@ private data class DeferredChecks(
     companion object {
         fun skipped(
             snapshot: com.eltavine.duckdetector.features.tee.data.attestation.AttestationSnapshot,
+            timingSideChannel: com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingSideChannelResult,
         ) = DeferredChecks(
             pairConsistency = com.eltavine.duckdetector.features.tee.data.verification.keystore.KeyPairConsistencyResult(
                 keyMatchesCertificate = true,
@@ -194,6 +210,8 @@ private data class DeferredChecks(
                 suspicious = false,
                 detail = "Timing probe skipped.",
             ),
+            timingSideChannel = timingSideChannel,
+
             oversizedChallenge = com.eltavine.duckdetector.features.tee.data.verification.keystore.OversizedChallengeResult(
                 acceptedOversizedChallenge = false,
                 acceptedSizes = emptyList(),

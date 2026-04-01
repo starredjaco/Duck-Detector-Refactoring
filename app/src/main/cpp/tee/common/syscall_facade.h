@@ -67,6 +67,10 @@ namespace ducktee::common {
 
     bool monotonic_time_ns(SyscallBackend backend, std::uint64_t *out_ns);
 
+    bool register_timer_time_ns(std::uint64_t *out_ns);
+
+    bool bind_current_thread_to_cpu0();
+
     bool select_preferred_local_timer(
             bool request_cpu0_affinity,
             LocalTimerSelection *out

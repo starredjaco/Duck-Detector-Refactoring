@@ -17,6 +17,7 @@ import com.eltavine.duckdetector.features.tee.data.verification.keystore.Operati
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.OversizedChallengeResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.PureCertificateResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingAnomalyResult
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingSideChannelResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.UpdateSubcomponentResult
 import com.eltavine.duckdetector.features.tee.data.verification.strongbox.StrongBoxBehaviorResult
 import com.eltavine.duckdetector.features.tee.domain.TeeRkpState
@@ -32,6 +33,7 @@ data class TeeScanArtifacts(
     val aesGcm: AesGcmRoundTripResult,
     val lifecycle: KeyLifecycleResult,
     val timing: TimingAnomalyResult,
+    val timingSideChannel: TimingSideChannelResult,
     val oversizedChallenge: OversizedChallengeResult,
     val keyboxImport: KeyboxImportResult,
     val keystore2Hook: Keystore2HookResult,

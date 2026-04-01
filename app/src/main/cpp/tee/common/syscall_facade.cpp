@@ -108,18 +108,6 @@ namespace ducktee::common {
             return true;
         }
 
-        bool bind_current_thread_to_cpu0() {
-#if defined(__NR_gettid)
-            const auto tid = static_cast<pid_t>(syscall(__NR_gettid));
-#else
-            const auto tid = getpid();
-#endif
-            cpu_set_t mask;
-            CPU_ZERO(&mask);
-            CPU_SET(0, &mask);
-            return sched_setaffinity(tid, sizeof(mask), &mask) == 0;
-        }
-
         bool arm64_cntvct_self_check(std::string *failure_reason) {
             const auto frequency = tee_arm64_read_cntfrq();
             if (frequency == 0ULL) {
@@ -333,6 +321,31 @@ namespace ducktee::common {
 #endif
         }
         return false;
+    }
+
+    bool register_timer_time_ns(std::uint64_t *out_ns) {
+#if defined(__aarch64__)
+        return arm64_cntvct_now(out_ns);
+#else
+        static_cast<void>(out_ns);
+        return false;
+#endif
+    }
+
+    bool bind_current_thread_to_cpu0() {
+#if defined(__aarch64__)
+#if defined(__NR_gettid)
+        const auto tid = static_cast<pid_t>(syscall(__NR_gettid));
+#else
+        const auto tid = getpid();
+#endif
+        cpu_set_t mask;
+        CPU_ZERO(&mask);
+        CPU_SET(0, &mask);
+        return sched_setaffinity(tid, sizeof(mask), &mask) == 0;
+#else
+        return false;
+#endif
     }
 
     bool select_preferred_local_timer(

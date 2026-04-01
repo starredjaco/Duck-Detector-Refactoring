@@ -23,6 +23,7 @@ import com.eltavine.duckdetector.features.tee.data.verification.keystore.Operati
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.OversizedChallengeResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.PureCertificateResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingAnomalyResult
+import com.eltavine.duckdetector.features.tee.data.verification.keystore.TimingSideChannelResult
 import com.eltavine.duckdetector.features.tee.data.verification.keystore.UpdateSubcomponentResult
 import com.eltavine.duckdetector.features.tee.data.verification.strongbox.StrongBoxBehaviorResult
 import com.eltavine.duckdetector.features.tee.domain.TeeNetworkMode
@@ -225,6 +226,252 @@ class TeeReportReducerTest {
                     it.body.contains("1.66x") &&
                     it.body.contains("arm64_cntvct") &&
                     it.body.contains("bound_cpu0")
+        })
+    }
+
+    @Test
+    fun `timing probe warning stays in checks without creating supplementary review`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timing = TimingAnomalyResult(
+                    suspicious = true,
+                    medianMicros = 299,
+                    detail = "Timing side-channel diff 0.299ms stayed below the 0.3ms positive threshold.",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(0, report.supplementaryIndicatorCount)
+        assertTrue(report.signals.any {
+            it.label == "Signals" &&
+                    it.value == "0 policy hard • 0 policy review • 0 local" &&
+                    it.level == TeeSignalLevel.PASS
+        })
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing" &&
+                    it.body == "Fast/steady • 299us" &&
+                    it.level == TeeSignalLevel.WARN
+        })
+        assertEquals("Attestation, trust path, and revocation checks line up.", report.summary)
+    }
+
+    @Test
+    fun `timing probe equality threshold remains non positive in reducer output`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timing = TimingAnomalyResult(
+                    suspicious = false,
+                    medianMicros = 300,
+                    detail = "Timing side-channel diff 0.3ms matched the threshold and remained non-positive.",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(0, report.supplementaryIndicatorCount)
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing" &&
+                    it.body == "Median 300us" &&
+                    it.level == TeeSignalLevel.INFO
+        })
+        assertTrue(report.signals.any {
+            it.label == "Signals" &&
+                    it.value == "0 policy hard • 0 policy review • 0 local" &&
+                    it.level == TeeSignalLevel.PASS
+        })
+    }
+
+    @Test
+    fun `timing side-channel positive result becomes supplementary review and exposes metrics`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = true,
+                    suspicious = true,
+                    sampleCount = 20,
+                    warmupCount = 5,
+                    avgAttestedMillis = 0.612,
+                    avgNonAttestedMillis = 0.300,
+                    diffMillis = 0.312,
+                    detail = "register timer source; avgAttested=0.612ms, avgNonAttested=0.300ms, diff=0.312ms",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(1, report.supplementaryIndicatorCount)
+        assertTrue(report.summary.contains("timing side-channel", ignoreCase = true))
+        assertTrue(report.summary.contains("supplementary", ignoreCase = true))
+        assertTrue(report.summary.contains("+0.3ms", ignoreCase = true))
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("Register timer") &&
+                    it.body.contains("attested 0.612ms") &&
+                    it.body.contains("non-attested 0.300ms") &&
+                    it.body.contains("diff 0.312ms") &&
+                    it.body.contains("threshold ±0.3ms") &&
+                    it.level == TeeSignalLevel.WARN
+        })
+    }
+
+    @Test
+    fun `timing side-channel equality threshold stays informational`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = true,
+                    suspicious = false,
+                    sampleCount = 20,
+                    warmupCount = 5,
+                    avgAttestedMillis = 0.300,
+                    avgNonAttestedMillis = 0.000,
+                    diffMillis = 0.300,
+                    detail = "fallback timer path; avgAttested=0.300ms, avgNonAttested=0.000ms, diff=0.300ms",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(0, report.supplementaryIndicatorCount)
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("Fallback timer") &&
+                    it.body.contains("diff 0.300ms") &&
+                    it.body.contains("Not positive") &&
+                    it.level == TeeSignalLevel.INFO
+        })
+    }
+
+    @Test
+    fun `timing side-channel negative threshold breach becomes supplementary review with fallback wording`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = true,
+                    suspicious = true,
+                    sampleCount = 20,
+                    warmupCount = 5,
+                    avgAttestedMillis = 0.100,
+                    avgNonAttestedMillis = 0.450,
+                    diffMillis = -0.350,
+                    detail = "fallback timer path; avgAttested=0.100ms, avgNonAttested=0.450ms, diff=-0.350ms",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(1, report.supplementaryIndicatorCount)
+        assertTrue(report.summary.contains("Fallback timer timing side-channel stayed supplementary"))
+        assertTrue(report.summary.contains("-0.3ms"))
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("Fallback timer") &&
+                    it.body.contains("diff -0.350ms") &&
+                    it.body.contains("threshold ±0.3ms") &&
+                    it.level == TeeSignalLevel.WARN
+        })
+    }
+
+    @Test
+    fun `timing side-channel degraded result still shows timer affinity and reason`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = false,
+                    suspicious = false,
+                    sampleCount = 1000,
+                    warmupCount = 5,
+                    source = "keystore2_getKeyEntry_binder",
+                    timerSource = "arm64_cntvct",
+                    affinity = "bound_cpu0",
+                    failureReason = "Keystore2 getKeyEntry transact returned false",
+                    detail = "measurement unavailable after binder transact failure",
+                ),
+            ),
+        )
+
+        assertEquals(TeeVerdict.CONSISTENT, report.verdict)
+        assertEquals(0, report.supplementaryIndicatorCount)
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("Register timer") &&
+                    it.body.contains("bound_cpu0") &&
+                    it.body.contains("Measurement unavailable") &&
+                    it.body.contains("reason Keystore2 getKeyEntry transact returned false") &&
+                    it.level == TeeSignalLevel.INFO
+        })
+    }
+
+    @Test
+    fun `timing side-channel negative measured result still shows timer and affinity`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = true,
+                    suspicious = false,
+                    sampleCount = 1000,
+                    warmupCount = 5,
+                    avgAttestedMillis = 0.280,
+                    avgNonAttestedMillis = 0.120,
+                    diffMillis = 0.160,
+                    source = "keystore2_getKeyEntry_binder",
+                    timerSource = "arm64_cntvct",
+                    affinity = "bound_cpu0",
+                    detail = "stable negative measurement",
+                ),
+            ),
+        )
+
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("Register timer") &&
+                    it.body.contains("bound_cpu0") &&
+                    it.body.contains("attested 0.280ms") &&
+                    it.body.contains("non-attested 0.120ms") &&
+                    it.body.contains("diff 0.160ms") &&
+                    it.body.contains("Not positive") &&
+                    it.level == TeeSignalLevel.INFO
+        })
+    }
+
+    @Test
+    fun `timing side-channel partial samples still show available timing context`() {
+        val report = reducer.reduce(
+            baseArtifacts(
+                timingSideChannel = TimingSideChannelResult(
+                    probeRan = true,
+                    measurementAvailable = true,
+                    suspicious = false,
+                    sampleCount = 1000,
+                    warmupCount = 5,
+                    avgAttestedMillis = 0.310,
+                    avgNonAttestedMillis = null,
+                    diffMillis = null,
+                    source = "keystore2_getKeyEntry_binder",
+                    timerSource = "arm64_cntvct",
+                    affinity = "bound_cpu0",
+                    failureReason = "non-attested path unavailable",
+                    detail = "partial timing measurement",
+                ),
+            ),
+        )
+
+        assertTrue(report.sections.single { it.title == "Checks" }.items.any {
+            it.title == "Timing side-channel" &&
+                    it.body.contains("Register timer") &&
+                    it.body.contains("bound_cpu0") &&
+                    it.body.contains("attested 0.310ms") &&
+                    it.body.contains("non-attested n/a") &&
+                    it.body.contains("diff n/a") &&
+                    it.body.contains("Not positive") &&
+                    it.body.contains("reason non-attested path unavailable") &&
+                    it.level == TeeSignalLevel.INFO
         })
     }
 
@@ -612,6 +859,19 @@ class TeeReportReducerTest {
             decryptMicros = 1700,
             detail = "ok",
         ),
+        timing: TimingAnomalyResult = TimingAnomalyResult(
+            suspicious = false,
+            medianMicros = 1800,
+            detail = "ok",
+        ),
+        timingSideChannel: TimingSideChannelResult = TimingSideChannelResult(
+            probeRan = false,
+            measurementAvailable = false,
+            timerSource = "unknown",
+            affinity = "not_requested",
+            failureReason = "skipped",
+            detail = "skipped",
+        ),
         strongBox: StrongBoxBehaviorResult = StrongBoxBehaviorResult(
             requested = false,
             advertised = false,
@@ -687,11 +947,8 @@ class TeeReportReducerTest {
                 regeneratedFreshMaterial = true,
                 detail = "ok",
             ),
-            timing = TimingAnomalyResult(
-                suspicious = false,
-                medianMicros = 1800,
-                detail = "ok",
-            ),
+            timing = timing,
+            timingSideChannel = timingSideChannel,
             oversizedChallenge = oversizedChallenge,
             keyboxImport = KeyboxImportResult(
                 executed = false,
